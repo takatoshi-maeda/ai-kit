@@ -1,0 +1,68 @@
+{
+  "name": "ai-kit Development",
+  "image": "vibebox/ai-kit:latest",
+  "mounts": [
+    // Claude Code
+    "source=${env:HOME}/.claude,target=/home/vibebox/.claude,type=bind",
+    "source=${env:HOME}/.claude.json,target=/home/vibebox/.claude.json,type=bind",
+    // Cursor CLI
+    "source=${env:HOME}/.config/cursor,target=/home/vibebox/.config/cursor,type=bind",
+    // Codex
+    "source=${env:HOME}/.codex,target=/home/vibebox/.codex,type=bind",
+    // Optional Gemini credentials (enable only when needed)
+    // "source=${env:HOME}/.config/gcloud/application_default_credentials.json,target=/home/vibebox/.config/gcloud/application_default_credentials.json,type=bind",
+    // GitHub
+    "source=devcontainer-gh-config-${localEnv:USER},target=/home/vibebox/.config/gh.org,type=volume",
+    // Other
+    "source=${env:HOME}/.zsh_history,target=/home/vibebox/.zsh_history,type=bind",
+    "source=${env:SSH_AUTH_SOCK},target=/tmp/ssh-agent.sock,type=bind"
+  ],
+  "workspaceFolder": "/workspace",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "runArgs": ["--cap-add=NET_ADMIN", "--cap-add=NET_RAW", "--name=vibebox.ai-kit"],
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "anthropic.claude-code",
+        "openai.chatgpt"
+      ],
+      "settings": {
+        "editor.formatOnSave": true,
+        "editor.defaultFormatter": "esbenp.prettier-vscode",
+        "editor.codeActionsOnSave": {
+          "source.fixAll.eslint": "explicit"
+        },
+        "terminal.integrated.defaultProfile.linux": "zsh",
+        "terminal.integrated.profiles.linux": {
+          "bash": {
+            "path": "bash",
+            "icon": "terminal-bash"
+          },
+          "zsh": {
+            "path": "zsh"
+          }
+        }
+      }
+    }
+  },
+  "remoteUser": "vibebox",
+  "remoteEnv": {
+    "NODE_OPTIONS": "--max-old-space-size=4096",
+    "POWERLEVEL9K_DISABLE_GITSTATUS": "true",
+    "LANG": "ja_JP.UTF-8",
+    "LANGUAGE": "ja_JP:ja",
+    "LC_ALL": "ja_JP.UTF-8",
+    "LESSCHARSET": "utf-8",
+    "VIM_ENCODING": "utf-8",
+    "TERM": "xterm-256color"
+  },
+  "initializeCommand": [
+    "bash",
+    "-c",
+    "if [ \"${VIBEBOX_ENABLE_ECR_LOGIN:-false}\" = \"true\" ] && command -v envchain >/dev/null 2>&1; then envchain \"${VIBEBOX_ENVCHAIN_SERVICE:-vibebox:ai-kit:ecr}\" .devcontainer/ecr-login.sh; else echo 'Skipping ECR login'; fi && if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then gh api user -q .login > .devcontainer/.github-user 2>/dev/null; else echo 'GitHub CLI not available or not authenticated, skipping user setup'; fi && touch .devcontainer/.zsh_history"
+  ],
+  "postStartCommand": "cp .devcontainer/hooks-post-start.sh /home/vibebox/hooks-post-start.sh && chmod +x /home/vibebox/hooks-post-start.sh && /home/vibebox/hooks-post-start.sh",
+  "vibebox": {
+    "copyFiles": []
+  }
+}

@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""
+Optimized Claude Code wrapper with anti-flicker measures.
+"""
+
+import fcntl
+import os
+import pty
+import select
+import signal
+import sys
+import termios
+import time
+import tty
+
+
+def run_claude():
+    """Run claude with optimized PTY handling to prevent flickering."""
+    # Set up environment
+    os.environ['TERM'] = 'xterm-256color'
+    os.environ['COLORTERM'] = 'truecolor'
+    # React Ink specific optimizations
+    os.environ['FORCE_COLOR'] = '3'
+    os.environ['CI'] = 'false'  # Ensure interactive mode
+
+    # Create PTY with larger buffer
+    master_fd, slave_fd = pty.openpty()
+
+    # Set larger kernel buffer sizes for PTY
+    try:
+        # Increase PTY buffer size (Linux specific)
+        import struct
+        TIOCGPTN = 0x80045430
+        TIOCSPTLCK = 0x40045431
+        fcntl.ioctl(master_fd, TIOCSPTLCK, struct.pack('i', 0))
+    except:
+        pass
+
+    # Fork process
+    pid = os.fork()
+
+    if pid == 0:  # Child process
+        os.close(master_fd)
+
+        # Set up slave PTY as controlling terminal
+        os.setsid()
+        fcntl.ioctl(slave_fd, termios.TIOCSCTTY, 0)
+
+        # Redirect stdin/stdout/stderr to slave PTY
+        os.dup2(slave_fd, 0)
+        os.dup2(slave_fd, 1)
+        os.dup2(slave_fd, 2)
+
+        if slave_fd > 2:
+            os.close(slave_fd)
+
+        # Execute claude
+        os.execvp('claude', sys.argv[1:])
+        sys.exit(1)  # Should not reach here
+
+    # Parent process
+    os.close(slave_fd)
+
+    # Save terminal attributes
+    old_tty = termios.tcgetattr(sys.stdin)
+
+    # Get terminal size
+    import struct
+    rows, cols = struct.unpack('HH', fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, '1234'))
+
+    # Propagate terminal size to child
+    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack('HH', rows, cols))
+
+    # Setup signal handler for window resize
+    def handle_winch(signum, frame):
+        rows, cols = struct.unpack('HH', fcntl.ioctl(sys.stdout.fileno(), termios.TIOCGWINSZ, '1234'))
+        fcntl.ioctl(master_fd, termios.TIOCSWINSZ, struct.pack('HH', rows, cols))
+
+    signal.signal(signal.SIGWINCH, handle_winch)
+
+    try:
+        # Set terminal to raw mode
+        tty.setraw(sys.stdin.fileno())
+
+        # Make master_fd non-blocking
+        flags = fcntl.fcntl(master_fd, fcntl.F_GETFL)
+        fcntl.fcntl(master_fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
+
+        # Anti-flicker: Use larger buffer and batch writes
+        output_buffer = bytearray()
+        last_flush_time = time.time()
+        FLUSH_INTERVAL = 0.033  # ~30fps for React Ink (slower is better)
+        MAX_BUFFER_SIZE = 65536  # Larger buffer for React Ink
+
+        # Track ANSI escape sequences
+        in_escape_sequence = False
+        escape_buffer = bytearray()
+
+        # React Ink often clears screen, track this
+        last_clear_time = 0
+        CLEAR_THROTTLE = 0.1  # Throttle clear screen commands
+
+        while True:
+            # Wait for I/O with short timeout
+            rlist, _, _ = select.select([sys.stdin, master_fd], [], [], 0.001)
+
+            # Handle input from user
+            if sys.stdin in rlist:
+                try:
+                    data = os.read(sys.stdin.fileno(), 1)
+                    if data:
+                        os.write(master_fd, data)
+                        # Force immediate flush for input echo
+                        if output_buffer:
+                            os.write(sys.stdout.fileno(), output_buffer)
+                            sys.stdout.flush()
+                            output_buffer.clear()
+                            last_flush_time = time.time()
+                except OSError:
+                    break
+
+            # Handle output from claude
+            if master_fd in rlist:
+                try:
+                    data = os.read(master_fd, MAX_BUFFER_SIZE)
+                    if not data:
+                        break
+
+                    # Process data to handle ANSI sequences better
+                    for byte in data:
+                        if in_escape_sequence:
+                            escape_buffer.append(byte)
+                            # Check if escape sequence is complete
+                            if (byte >= 0x40 and byte <= 0x7E) or byte == 0x0A:
+                                in_escape_sequence = False
+                                # Check for clear screen sequences
+                                seq = bytes(escape_buffer)
+                                current_time = time.time()
+                                if (b'2J' in seq or b'H' in seq) and current_time - last_clear_time < CLEAR_THROTTLE:
+                                    # Skip rapid clear screens
+                                    escape_buffer.clear()
+                                    continue
+                                elif b'2J' in seq:
+                                    last_clear_time = current_time
+                                output_buffer.extend(escape_buffer)
+                                escape_buffer.clear()
+                        elif byte == 0x1B:  # ESC
+                            in_escape_sequence = True
+                            escape_buffer = bytearray([byte])
+                        else:
+                            output_buffer.append(byte)
+
+                except OSError as e:
+                    if e.errno == 5:  # I/O error
+                        break
+                    elif e.errno == 11:  # Resource temporarily unavailable
+                        pass
+
+            # Batch write output to reduce flickering
+            current_time = time.time()
+            should_flush = False
+
+            # Determine if we should flush
+            if output_buffer:
+                if len(output_buffer) > MAX_BUFFER_SIZE * 0.8:  # Buffer is getting full
+                    should_flush = True
+                elif current_time - last_flush_time > FLUSH_INTERVAL:  # Time to flush
+                    should_flush = True
+                elif b'\n' in output_buffer[-min(1024, len(output_buffer)):]:  # Recent complete line
+                    should_flush = True
+                elif b'\r' in output_buffer[-min(256, len(output_buffer)):]:  # Carriage return (progress bars)
+                    should_flush = True
+
+            if should_flush and output_buffer:
+                try:
+                    # Write in chunks to avoid overwhelming the terminal
+                    chunk_size = 8192
+                    for i in range(0, len(output_buffer), chunk_size):
+                        chunk = output_buffer[i:i+chunk_size]
+                        os.write(sys.stdout.fileno(), chunk)
+                        if i + chunk_size < len(output_buffer):
+                            time.sleep(0.001)  # Small delay between chunks
+                    sys.stdout.flush()
+                    output_buffer.clear()
+                    last_flush_time = current_time
+                except OSError:
+                    break
+
+            # Check if child process has exited
+            try:
+                pid_result, status = os.waitpid(pid, os.WNOHANG)
+                if pid_result != 0:
+                    # Flush any remaining output
+                    if output_buffer:
+                        os.write(sys.stdout.fileno(), output_buffer)
+                        sys.stdout.flush()
+                    return os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
+            except:
+                break
+
+    except KeyboardInterrupt:
+        # Handle Ctrl-C gracefully
+        os.kill(pid, 2)  # SIGINT
+
+    finally:
+        # Restore terminal
+        termios.tcsetattr(sys.stdin, termios.TCSADRAIN, old_tty)
+        os.close(master_fd)
+
+        # Wait for child to exit
+        try:
+            _, status = os.waitpid(pid, 0)
+            return os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1
+        except:
+            return 1
+
+if __name__ == '__main__':
+    sys.exit(run_claude())
