@@ -7,12 +7,17 @@ import type { LLMChatInput } from "../../src/types/llm.js";
 const mockGenerateContent = vi.fn();
 const mockGenerateContentStream = vi.fn();
 
+let capturedCtorArgs: unknown;
+
 vi.mock("@google/genai", () => {
   class MockGoogleGenAI {
     models = {
       generateContent: mockGenerateContent,
       generateContentStream: mockGenerateContentStream,
     };
+    constructor(args: unknown) {
+      capturedCtorArgs = args;
+    }
   }
 
   return {
@@ -46,6 +51,50 @@ describe("GoogleClient", () => {
       expect(client.provider).toBe("google");
       expect(client.model).toBe("gemini-2.5-flash");
       expect(client.capabilities.supportsToolCalls).toBe(true);
+    });
+
+    it("passes apiKey when provided", () => {
+      makeClient({ apiKey: "my-key" });
+      expect(capturedCtorArgs).toEqual({ apiKey: "my-key" });
+    });
+
+    it("uses Vertex AI mode when GOOGLE_CLOUD_SA_CREDENTIAL is set and no apiKey", () => {
+      const sa = {
+        project_id: "my-project",
+        client_email: "sa@my-project.iam.gserviceaccount.com",
+        private_key: "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----\n",
+      };
+      process.env.GOOGLE_CLOUD_SA_CREDENTIAL = JSON.stringify(sa);
+      try {
+        makeClient({ apiKey: undefined });
+        expect(capturedCtorArgs).toEqual({
+          vertexai: true,
+          project: "my-project",
+          location: "us-central1",
+          googleAuthOptions: {
+            credentials: {
+              client_email: sa.client_email,
+              private_key: sa.private_key,
+            },
+          },
+        });
+      } finally {
+        delete process.env.GOOGLE_CLOUD_SA_CREDENTIAL;
+      }
+    });
+
+    it("prefers apiKey over GOOGLE_CLOUD_SA_CREDENTIAL", () => {
+      process.env.GOOGLE_CLOUD_SA_CREDENTIAL = JSON.stringify({
+        project_id: "p",
+        client_email: "e",
+        private_key: "k",
+      });
+      try {
+        makeClient({ apiKey: "explicit-key" });
+        expect(capturedCtorArgs).toEqual({ apiKey: "explicit-key" });
+      } finally {
+        delete process.env.GOOGLE_CLOUD_SA_CREDENTIAL;
+      }
     });
   });
 

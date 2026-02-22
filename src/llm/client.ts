@@ -41,6 +41,9 @@ export interface GoogleClientOptions extends LLMClientOptionsBase {
   topK?: number;
   thinkingBudget?: number;
   safetySettings?: GoogleSafetySettings[];
+  vertexai?: boolean;
+  project?: string;
+  location?: string;
 }
 
 export interface GoogleSafetySettings {

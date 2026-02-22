@@ -32,9 +32,7 @@ export class GoogleClient implements LLMClient {
   constructor(options: GoogleClientOptions) {
     this.options = options;
     this.model = options.model;
-    this.client = new GoogleGenAI({
-      apiKey: options.apiKey,
-    });
+    this.client = new GoogleGenAI(this.buildClientOptions(options));
     this.capabilities = {
       supportsReasoning: true,
       supportsToolCalls: true,
@@ -42,6 +40,38 @@ export class GoogleClient implements LLMClient {
       supportsImages: true,
       contextWindowSize: 1_000_000,
     };
+  }
+
+  private buildClientOptions(options: GoogleClientOptions): ConstructorParameters<typeof GoogleGenAI>[0] {
+    if (options.apiKey) {
+      return { apiKey: options.apiKey };
+    }
+
+    const saJson = process.env.GOOGLE_CLOUD_SA_CREDENTIAL;
+    if (saJson) {
+      const sa = JSON.parse(saJson) as { project_id?: string; client_email?: string; private_key?: string };
+      return {
+        vertexai: true,
+        project: options.project ?? sa.project_id,
+        location: options.location ?? "us-central1",
+        googleAuthOptions: {
+          credentials: {
+            client_email: sa.client_email,
+            private_key: sa.private_key,
+          },
+        },
+      };
+    }
+
+    if (options.vertexai) {
+      return {
+        vertexai: true,
+        project: options.project,
+        location: options.location ?? "us-central1",
+      };
+    }
+
+    return { apiKey: options.apiKey };
   }
 
   async invoke(input: LLMChatInput): Promise<LLMResult> {
@@ -70,6 +100,7 @@ export class GoogleClient implements LLMClient {
 
     let responseId: string | undefined;
     let fullText = "";
+    const toolCalls: LLMToolCall[] = [];
 
     try {
       for await (const chunk of streamGen) {
@@ -90,20 +121,35 @@ export class GoogleClient implements LLMClient {
               yield { type: "text.delta", delta: part.text };
             }
           } else if (part.functionCall) {
-            yield {
-              type: "tool_call.arguments.done",
-              toolCallId: part.functionCall.id ?? part.functionCall.name ?? "",
+            const tc: LLMToolCall = {
+              id: part.functionCall.id ?? part.functionCall.name ?? "",
               name: part.functionCall.name ?? "",
               arguments: (part.functionCall.args ?? {}) as Record<string, unknown>,
+            };
+            toolCalls.push(tc);
+            yield {
+              type: "tool_call.arguments.done",
+              toolCallId: tc.id,
+              name: tc.name,
+              arguments: tc.arguments,
             };
           }
         }
       }
 
-      // Build final result from accumulated data
-      // Re-invoke for complete response to get usage metadata
-      // Actually we can just return what we have
       yield { type: "text.done", text: fullText };
+
+      yield {
+        type: "response.completed",
+        result: {
+          type: toolCalls.length > 0 ? "tool_use" : "message",
+          content: fullText || null,
+          toolCalls,
+          usage: emptyUsage(),
+          responseId: responseId ?? null,
+          finishReason: toolCalls.length > 0 ? "tool_use" : "stop",
+        },
+      };
 
     } catch (error) {
       yield { type: "error", error: this.mapError(error) };
@@ -123,6 +169,14 @@ export class GoogleClient implements LLMClient {
 
     if (input.instructions) {
       config.systemInstruction = input.instructions;
+    } else {
+      const systemText = input.messages
+        .filter((m) => m.role === "system")
+        .map((m) => (typeof m.content === "string" ? m.content : ""))
+        .join("\n");
+      if (systemText) {
+        config.systemInstruction = systemText;
+      }
     }
 
     if (this.options.temperature !== undefined) {
