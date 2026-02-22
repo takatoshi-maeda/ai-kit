@@ -23,3 +23,7 @@ export { FileHistory } from "./conversation/index.js";
 export type { MemoryBackend, MemoryPolicy } from "./memory/index.js";
 export { AgentMemoryImpl } from "./memory/index.js";
 export type { AgentMemoryOptions } from "./memory/index.js";
+
+// Tools
+export { createFileTools, createRipgrepTool, createTodoTools } from "./tools/index.js";
+export type { TodoItem } from "./tools/index.js";

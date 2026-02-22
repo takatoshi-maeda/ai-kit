@@ -124,6 +124,10 @@ export type { MemoryBackend, MemoryPolicy } from "./agent/index.js";
 export { AgentMemoryImpl } from "./agent/index.js";
 export type { AgentMemoryOptions } from "./agent/index.js";
 
+// Built-in tools
+export { createFileTools, createRipgrepTool, createTodoTools } from "./agent/index.js";
+export type { TodoItem } from "./agent/index.js";
+
 // Storage
 export type { DataStorage, FileStats } from "./storage/index.js";
 export { FileSystemStorage } from "./storage/index.js";
