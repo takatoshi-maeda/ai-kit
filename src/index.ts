@@ -103,3 +103,11 @@ export { toolCallsToMessages } from "./llm/tool/message-converter.js";
 // Retry
 export { withRetry } from "./llm/retry.js";
 export type { RetryOptions } from "./llm/retry.js";
+
+// Agent
+export { AgentContextImpl } from "./agent/index.js";
+export type { AgentContextOptions } from "./agent/index.js";
+export { ProgressTrackerImpl } from "./agent/index.js";
+export { ConversationalAgent } from "./agent/index.js";
+export type { AgentStream } from "./agent/index.js";
+export { StructuredAgent } from "./agent/index.js";
