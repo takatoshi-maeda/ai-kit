@@ -74,5 +74,6 @@ export type {
   RerankDocument,
   RerankedDocument,
   RerankResult,
+  Reranker,
   SimilarityResult,
 } from "./embedding.js";

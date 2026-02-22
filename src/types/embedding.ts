@@ -38,6 +38,12 @@ export interface RerankResult {
   };
 }
 
+export interface Reranker {
+  readonly provider: RerankerProviderId;
+  readonly model: string;
+  rerank(query: string, documents: RerankDocument[]): Promise<RerankResult>;
+}
+
 export interface SimilarityResult<T = unknown> {
   id: string;
   text: string;

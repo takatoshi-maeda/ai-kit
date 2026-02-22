@@ -66,6 +66,7 @@ export type {
   RerankDocument,
   RerankedDocument,
   RerankResult,
+  Reranker,
   SimilarityResult,
 } from "./types/index.js";
 
@@ -138,3 +139,20 @@ export { ModelRegistry } from "./model-registry/index.js";
 // Tracing
 export { CostTracker, UsageRecorder } from "./tracing/index.js";
 export type { UsageSummary } from "./tracing/index.js";
+
+// Embedding
+export { createEmbeddingProvider } from "./embedding/index.js";
+export type { EmbeddingProviderOptions } from "./embedding/index.js";
+export { OpenAIEmbeddingProvider } from "./embedding/providers/openai.js";
+export { VoyageAIEmbeddingProvider } from "./embedding/providers/voyageai.js";
+export { DeepInfraEmbeddingProvider } from "./embedding/providers/deepinfra.js";
+
+// Reranker
+export { createReranker } from "./reranker/index.js";
+export type { RerankerOptions } from "./reranker/index.js";
+export { VoyageAIReranker } from "./reranker/providers/voyageai.js";
+export { DeepInfraReranker } from "./reranker/providers/deepinfra.js";
+export { BedrockReranker } from "./reranker/providers/bedrock.js";
+
+// Similarity
+export { TextSimilarityIndex } from "./similarity/index.js";
