@@ -131,3 +131,10 @@ export type { TodoItem } from "./agent/index.js";
 // Storage
 export type { DataStorage, FileStats } from "./storage/index.js";
 export { FileSystemStorage } from "./storage/index.js";
+
+// Model Registry
+export { ModelRegistry } from "./model-registry/index.js";
+
+// Tracing
+export { CostTracker, UsageRecorder } from "./tracing/index.js";
+export type { UsageSummary } from "./tracing/index.js";
