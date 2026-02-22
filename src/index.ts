@@ -111,3 +111,16 @@ export { ProgressTrackerImpl } from "./agent/index.js";
 export { ConversationalAgent } from "./agent/index.js";
 export type { AgentStream } from "./agent/index.js";
 export { StructuredAgent } from "./agent/index.js";
+
+// Conversation
+export { InMemoryHistory } from "./agent/index.js";
+export { FileHistory } from "./agent/index.js";
+
+// Memory
+export type { MemoryBackend, MemoryPolicy } from "./agent/index.js";
+export { AgentMemoryImpl } from "./agent/index.js";
+export type { AgentMemoryOptions } from "./agent/index.js";
+
+// Storage
+export type { DataStorage, FileStats } from "./storage/index.js";
+export { FileSystemStorage } from "./storage/index.js";

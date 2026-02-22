@@ -11,3 +11,12 @@ export {
   runAfterToolCallHooks,
   runAfterRunHooks,
 } from "./hooks.js";
+
+// Conversation
+export { InMemoryHistory } from "./conversation/index.js";
+export { FileHistory } from "./conversation/index.js";
+
+// Memory
+export type { MemoryBackend, MemoryPolicy } from "./memory/index.js";
+export { AgentMemoryImpl } from "./memory/index.js";
+export type { AgentMemoryOptions } from "./memory/index.js";
