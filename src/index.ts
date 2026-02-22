@@ -78,3 +78,28 @@ export {
   ToolExecutionError,
   MaxTurnsExceededError,
 } from "./errors.js";
+
+// LLM
+export { createLLMClient } from "./llm/index.js";
+export type {
+  LLMClientOptions,
+  LLMClientOptionsBase,
+  OpenAIClientOptions,
+  AnthropicClientOptions,
+  GoogleClientOptions,
+  GoogleSafetySettings,
+  PerplexityClientOptions,
+} from "./llm/index.js";
+export { OpenAIClient } from "./llm/providers/openai.js";
+export { AnthropicClient } from "./llm/providers/anthropic.js";
+export { GoogleClient } from "./llm/providers/google.js";
+export { PerplexityClient } from "./llm/providers/perplexity.js";
+
+// Tool utilities
+export { defineTool, toolToJsonSchema } from "./llm/tool/define.js";
+export { ToolExecutor } from "./llm/tool/executor.js";
+export { toolCallsToMessages } from "./llm/tool/message-converter.js";
+
+// Retry
+export { withRetry } from "./llm/retry.js";
+export type { RetryOptions } from "./llm/retry.js";
