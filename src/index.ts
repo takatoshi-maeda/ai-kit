@@ -156,3 +156,7 @@ export { BedrockReranker } from "./reranker/providers/bedrock.js";
 
 // Similarity
 export { TextSimilarityIndex } from "./similarity/index.js";
+
+// Prompt
+export type { TemplateEngine, PromptLoaderOptions } from "./prompt/index.js";
+export { PromptLoader, MarkdownPromptLoader } from "./prompt/index.js";
