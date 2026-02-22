@@ -160,3 +160,23 @@ export { TextSimilarityIndex } from "./similarity/index.js";
 // Prompt
 export type { TemplateEngine, PromptLoaderOptions } from "./prompt/index.js";
 export { PromptLoader, MarkdownPromptLoader } from "./prompt/index.js";
+
+// MCP
+export { createMcpServer, buildMcpServer, AgentRegistry, JsonlMcpPersistence } from "./agent/index.js";
+export type {
+  CreateMcpServerOptions,
+  McpServerOptions,
+  AgentEntry,
+  AgentRegistryOptions,
+  McpPersistence,
+  Conversation,
+  ConversationSummary,
+  ConversationTurn,
+  TimelineItem,
+  McpUsageSummary,
+  IdempotencyRecord,
+  RunState,
+  AgentRunParams,
+  AgentRunResult,
+  McpStreamNotification,
+} from "./agent/index.js";

@@ -27,3 +27,23 @@ export type { AgentMemoryOptions } from "./memory/index.js";
 // Tools
 export { createFileTools, createRipgrepTool, createTodoTools } from "./tools/index.js";
 export type { TodoItem } from "./tools/index.js";
+
+// MCP
+export { createMcpServer, buildMcpServer, AgentRegistry, JsonlMcpPersistence } from "./mcp/index.js";
+export type {
+  CreateMcpServerOptions,
+  McpServerOptions,
+  AgentEntry,
+  AgentRegistryOptions,
+  McpPersistence,
+  Conversation,
+  ConversationSummary,
+  ConversationTurn,
+  TimelineItem,
+  McpUsageSummary,
+  IdempotencyRecord,
+  RunState,
+  AgentRunParams,
+  AgentRunResult,
+  McpStreamNotification,
+} from "./mcp/index.js";
