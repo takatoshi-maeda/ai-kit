@@ -129,6 +129,21 @@ export type { AgentMemoryOptions } from "./agent/index.js";
 export { createFileTools, createRipgrepTool, createTodoTools } from "./agent/index.js";
 export type { TodoItem } from "./agent/index.js";
 
+// Stream
+export type {
+  AgentStreamResponse,
+  AgentTextDelta,
+  AgentToolCall,
+  AgentReasoningDelta,
+  AgentProgress,
+  AgentResultEvent,
+  AgentError,
+  AgentRunStart,
+  AgentRunStop,
+  AgentStreamForwarderOptions,
+} from "./agent/index.js";
+export { AgentStreamForwarder } from "./agent/index.js";
+
 // Storage
 export type { DataStorage, FileStats } from "./storage/index.js";
 export { FileSystemStorage } from "./storage/index.js";

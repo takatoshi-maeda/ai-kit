@@ -28,6 +28,21 @@ export type { AgentMemoryOptions } from "./memory/index.js";
 export { createFileTools, createRipgrepTool, createTodoTools } from "./tools/index.js";
 export type { TodoItem } from "./tools/index.js";
 
+// Stream
+export type {
+  AgentStreamResponse,
+  AgentTextDelta,
+  AgentToolCall,
+  AgentReasoningDelta,
+  AgentProgress,
+  AgentResultEvent,
+  AgentError,
+  AgentRunStart,
+  AgentRunStop,
+} from "./stream/index.js";
+export { AgentStreamForwarder } from "./stream/index.js";
+export type { AgentStreamForwarderOptions } from "./stream/index.js";
+
 // MCP
 export { createMcpServer, buildMcpServer, AgentRegistry, JsonlMcpPersistence } from "./mcp/index.js";
 export type {
