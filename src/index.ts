@@ -111,6 +111,9 @@ export { ProgressTrackerImpl } from "./agent/index.js";
 export { ConversationalAgent } from "./agent/index.js";
 export type { AgentStream } from "./agent/index.js";
 export { StructuredAgent } from "./agent/index.js";
+export { AgentRouter } from "./agent/index.js";
+export type { AgentRouterOptions } from "./agent/index.js";
+export { AgentProxy } from "./agent/index.js";
 
 // Conversation
 export { InMemoryHistory } from "./agent/index.js";
