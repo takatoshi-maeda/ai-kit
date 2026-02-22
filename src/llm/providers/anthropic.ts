@@ -70,6 +70,7 @@ export class AnthropicClient implements LLMClient {
     }
 
     let responseId: string | undefined;
+    let accumulatedText = "";
     // Track active content blocks for streaming
     const activeBlocks = new Map<
       number,
@@ -103,6 +104,7 @@ export class AnthropicClient implements LLMClient {
           case "content_block_delta": {
             const blockInfo = activeBlocks.get(event.index);
             if (event.delta.type === "text_delta") {
+              accumulatedText += event.delta.text;
               yield { type: "text.delta", delta: event.delta.text };
             } else if (event.delta.type === "input_json_delta" && blockInfo) {
               yield {
@@ -118,6 +120,10 @@ export class AnthropicClient implements LLMClient {
           }
 
           case "content_block_stop": {
+            const stoppedBlock = activeBlocks.get(event.index);
+            if (stoppedBlock?.type === "text" && accumulatedText) {
+              yield { type: "text.done", text: accumulatedText };
+            }
             activeBlocks.delete(event.index);
             break;
           }
