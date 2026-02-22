@@ -139,6 +139,8 @@ export { ModelRegistry } from "./model-registry/index.js";
 // Tracing
 export { CostTracker, UsageRecorder } from "./tracing/index.js";
 export type { UsageSummary } from "./tracing/index.js";
+export { initTracing, withObservation } from "./tracing/index.js";
+export type { TracingOptions, Observation } from "./tracing/index.js";
 
 // Embedding
 export { createEmbeddingProvider } from "./embedding/index.js";
