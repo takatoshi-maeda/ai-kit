@@ -157,6 +157,7 @@ export async function handleAgentRun(
   const context = new AgentContextImpl({
     history: new InMemoryHistory(),
     sessionId,
+    selectedAgentName: agentId,
   });
 
   const agent = entry.create(context, agentParams);

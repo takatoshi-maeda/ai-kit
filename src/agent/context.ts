@@ -12,6 +12,7 @@ export interface AgentContextOptions {
   history: ConversationHistory;
   sessionId?: string;
   progress?: ProgressTracker;
+  selectedAgentName?: string;
 }
 
 export class AgentContextImpl implements AgentContext {
@@ -27,6 +28,7 @@ export class AgentContextImpl implements AgentContext {
     this.history = options.history;
     this.sessionId = options.sessionId ?? crypto.randomUUID();
     this.progress = options.progress ?? new ProgressTrackerImpl();
+    this.selectedAgentName = options.selectedAgentName;
   }
 
   collectToolResults<T>(schema: ZodType<T>): T[] {

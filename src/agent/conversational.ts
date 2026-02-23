@@ -42,7 +42,9 @@ export class ConversationalAgent {
     input: string,
     additionalInstructions?: string,
   ): AgentStream {
-    const observationPromise = startObservation("agent.run", {
+    const observationName =
+      this.options.context.selectedAgentName?.trim() || "agent.run";
+    const observationPromise = startObservation(observationName, {
       type: "span",
       input: {
         input,
