@@ -36,7 +36,13 @@ export interface AgentRunResult {
 export type McpStreamNotification =
   | { type: "agent.change_state.started"; sessionId: string; runId: string; agentId?: string; agentName?: string }
   | { type: "agent.reasoning_summary_delta"; delta: string }
-  | { type: "agent.tool_call"; summary: string; description?: string }
+  | {
+    type: "agent.tool_call";
+    summary: string;
+    description?: string;
+    toolCallId?: string;
+    arguments?: Record<string, unknown>;
+  }
   | { type: "agent.tool_call_finish"; summary: string }
   | { type: "agent.text_delta"; delta: string }
   | { type: "agent.text_result"; summary?: string; description?: string; responseId?: string }
@@ -337,6 +343,9 @@ async function forwardStreamEvent(
       await sendNotification("agent/stream-response", {
         type: "agent.tool_call",
         summary: event.name,
+        toolCallId: event.toolCallId,
+        arguments: event.arguments,
+        description: JSON.stringify(event.arguments, null, 2),
       });
       break;
     case "response.completed":

@@ -126,7 +126,7 @@ export { AgentMemoryImpl } from "./agent/index.js";
 export type { AgentMemoryOptions } from "./agent/index.js";
 
 // Built-in tools
-export { createFileTools, createRipgrepTool, createTodoTools } from "./agent/index.js";
+export { createFileTools, createGroundingSearchTool, createRipgrepTool, createTodoTools, createWebpageSummaryTool } from "./agent/index.js";
 export type { TodoItem } from "./agent/index.js";
 
 // Stream

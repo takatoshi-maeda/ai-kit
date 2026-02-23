@@ -236,7 +236,45 @@ export class OpenAIClient implements LLMClient {
   private convertMessages(messages: LLMMessage[]): ResponseInput {
     const items: ResponseInputItem[] = [];
 
-    for (const msg of messages) {
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+
+      if (msg.role === "tool") {
+        const toolRun: LLMMessage[] = [];
+        let j = i;
+        while (j < messages.length && messages[j].role === "tool") {
+          toolRun.push(messages[j]);
+          j++;
+        }
+
+        // OpenAI Responses API requires matching function_call items
+        // before function_call_output items in the same request input.
+        for (const toolMsg of toolRun) {
+          if (!toolMsg.toolCallId) continue;
+          items.push({
+            type: "function_call",
+            call_id: toolMsg.toolCallId,
+            name: toolMsg.name ?? "tool",
+            arguments: "{}",
+          });
+        }
+
+        for (const toolMsg of toolRun) {
+          if (!toolMsg.toolCallId) continue;
+          items.push({
+            type: "function_call_output",
+            call_id: toolMsg.toolCallId,
+            output:
+              typeof toolMsg.content === "string"
+                ? toolMsg.content
+                : JSON.stringify(toolMsg.content),
+          });
+        }
+
+        i = j - 1;
+        continue;
+      }
+
       switch (msg.role) {
         case "system":
           items.push({
@@ -271,15 +309,6 @@ export class OpenAIClient implements LLMClient {
           });
           break;
 
-        case "tool":
-          if (msg.toolCallId) {
-            items.push({
-              type: "function_call_output",
-              call_id: msg.toolCallId,
-              output: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
-            });
-          }
-          break;
       }
     }
 

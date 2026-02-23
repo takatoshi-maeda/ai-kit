@@ -159,7 +159,7 @@ export class AnthropicClient implements LLMClient {
       input.messages,
     );
 
-    const messages = chatMessages.map((m) => this.convertMessage(m));
+    const messages = this.convertMessages(chatMessages);
     const tools = input.tools?.map((t) => this.convertTool(t));
 
     const params: Anthropic.MessageCreateParams = {
@@ -206,6 +206,72 @@ export class AnthropicClient implements LLMClient {
     return params;
   }
 
+  private convertMessages(messages: LLMMessage[]): Anthropic.MessageParam[] {
+    const converted: Anthropic.MessageParam[] = [];
+
+    for (let i = 0; i < messages.length; i++) {
+      const msg = messages[i];
+      if (msg.role !== "tool") {
+        converted.push(this.convertMessage(msg));
+        continue;
+      }
+
+      const toolRun: LLMMessage[] = [];
+      let j = i;
+      while (j < messages.length && messages[j].role === "tool") {
+        toolRun.push(messages[j]);
+        j++;
+      }
+
+      let assistant = converted[converted.length - 1];
+      if (!assistant || assistant.role !== "assistant") {
+        assistant = { role: "assistant", content: [] };
+        converted.push(assistant);
+      }
+
+      if (typeof assistant.content === "string") {
+        assistant.content = [{ type: "text", text: assistant.content }];
+      }
+
+      const assistantBlocks = assistant.content as Anthropic.ContentBlockParam[];
+      const toolResultBlocks: Anthropic.ToolResultBlockParam[] = [];
+
+      for (const toolMsg of toolRun) {
+        const toolUseId = toolMsg.toolCallId ?? "";
+        const toolName = toolMsg.name ?? "tool";
+        const alreadyExists = assistantBlocks.some(
+          (b) => b.type === "tool_use" && b.id === toolUseId,
+        );
+
+        if (!alreadyExists && toolUseId) {
+          assistantBlocks.push({
+            type: "tool_use",
+            id: toolUseId,
+            name: toolName,
+            input: {},
+          });
+        }
+
+        toolResultBlocks.push({
+          type: "tool_result",
+          tool_use_id: toolUseId,
+          content: typeof toolMsg.content === "string"
+            ? toolMsg.content
+            : JSON.stringify(toolMsg.content),
+        });
+      }
+
+      converted.push({
+        role: "user",
+        content: toolResultBlocks,
+      });
+
+      i = j - 1;
+    }
+
+    return converted;
+  }
+
   private separateSystemMessages(
     messages: LLMMessage[],
   ): { systemMessages: LLMMessage[]; chatMessages: LLMMessage[] } {
@@ -225,16 +291,7 @@ export class AnthropicClient implements LLMClient {
     msg: LLMMessage,
   ): Anthropic.MessageParam {
     if (msg.role === "tool") {
-      return {
-        role: "user",
-        content: [
-          {
-            type: "tool_result",
-            tool_use_id: msg.toolCallId ?? "",
-            content: typeof msg.content === "string" ? msg.content : JSON.stringify(msg.content),
-          },
-        ],
-      };
+      throw new Error("Tool messages must be converted via convertMessages");
     }
 
     const role = msg.role === "user" ? "user" : "assistant";
