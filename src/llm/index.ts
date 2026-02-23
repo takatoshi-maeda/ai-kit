@@ -6,6 +6,24 @@ import { PerplexityClient } from "./providers/perplexity.js";
 import type { LLMResult } from "../types/llm.js";
 import type { LLMStreamEvent } from "../types/stream-events.js";
 import { startObservation, withObservation } from "../tracing/langfuse.js";
+import type { LLMProvider } from "./client.js";
+
+function buildTracingMetadata(
+  provider: LLMProvider,
+  mode: "invoke" | "stream",
+  extra?: Record<string, unknown>,
+): Record<string, unknown> {
+  return {
+    provider,
+    mode,
+    // Langfuse ChatML adapter relies on this key for robust provider detection.
+    ls_provider: provider,
+    attributes: {
+      "llm.system": provider,
+    },
+    ...(extra ?? {}),
+  };
+}
 
 export function createLLMClient(options: LLMClientOptions): LLMClient {
   const client = (() => {
@@ -38,20 +56,17 @@ function createTracedLLMClient(client: LLMClient): LLMClient {
           type: "generation",
           input,
           model: client.model,
-          metadata: {
-            provider: client.provider,
-            mode: "invoke",
-          },
+          metadata: buildTracingMetadata(client.provider, "invoke"),
         },
         async (observation) => {
           const result = await client.invoke(input);
           observation.update({
             output: result.content,
             usage: result.usage,
-            metadata: {
+            metadata: buildTracingMetadata(client.provider, "invoke", {
               responseId: result.responseId,
               toolCalls: result.toolCalls.length,
-            },
+            }),
           });
           return result;
         },
@@ -71,10 +86,7 @@ async function *tracedStream(
     type: "generation",
     input,
     model: client.model,
-    metadata: {
-      provider: client.provider,
-      mode: "stream",
-    },
+    metadata: buildTracingMetadata(client.provider, "stream"),
   });
 
   let completedResult: LLMResult | null = null;
@@ -99,16 +111,16 @@ async function *tracedStream(
         observation.update({
           output: completedResult.content,
           usage: completedResult.usage,
-          metadata: {
+          metadata: buildTracingMetadata(client.provider, "stream", {
             responseId: completedResult.responseId,
             toolCalls: completedResult.toolCalls.length,
-          },
+          }),
         });
       } else if (streamError) {
         observation.update({
-          metadata: {
+          metadata: buildTracingMetadata(client.provider, "stream", {
             error: streamError.message,
-          },
+          }),
         });
       }
       observation.end();
