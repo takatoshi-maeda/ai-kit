@@ -13,6 +13,7 @@ import { toolCallsToMessages } from "../llm/tool/message-converter.js";
 import {
   runWithObservationContext,
   startObservation,
+  withObservation,
 } from "../tracing/langfuse.js";
 import {
   runBeforeTurnHooks,
@@ -341,7 +342,31 @@ export class ConversationalAgent {
         toolCall,
       });
 
-      const result = await this.toolExecutor.execute(toolCall);
+      const result = await withObservation(
+        "agent.tool_call",
+        {
+          type: "span",
+          input: {
+            toolCallId: toolCall.id,
+            name: toolCall.name,
+            arguments: toolCall.arguments,
+          },
+          metadata: {
+            toolCallId: toolCall.id,
+            toolName: toolCall.name,
+          },
+        },
+        async (observation) => {
+          const toolResult = await this.toolExecutor.execute(toolCall);
+          observation.update({
+            output: toolResult.content,
+            metadata: {
+              isError: !!toolResult.isError,
+            },
+          });
+          return toolResult;
+        },
+      );
       toolCall.result = result;
       context.toolCallResults.push(toolCall);
 
