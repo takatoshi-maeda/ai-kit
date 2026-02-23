@@ -11,6 +11,10 @@ import type { LLMToolCall, ToolDefinition } from "../types/tool.js";
 import { ToolExecutor } from "../llm/tool/executor.js";
 import { toolCallsToMessages } from "../llm/tool/message-converter.js";
 import {
+  runWithObservationContext,
+  startObservation,
+} from "../tracing/langfuse.js";
+import {
   runBeforeTurnHooks,
   runAfterTurnHooks,
   runBeforeToolCallHooks,
@@ -37,6 +41,60 @@ export class ConversationalAgent {
     input: string,
     additionalInstructions?: string,
   ): AgentStream {
+    const observationPromise = startObservation("agent.run", {
+      type: "span",
+      input: {
+        input,
+        additionalInstructions,
+      },
+      metadata: {
+        sessionId: this.options.context.sessionId,
+        selectedAgentName: this.options.context.selectedAgentName,
+        provider: this.options.client.provider,
+        model: this.options.client.model,
+      },
+    });
+    let observationEnded = false;
+
+    const finishObservation = async (
+      result?: AgentResult,
+      error?: Error,
+    ): Promise<void> => {
+      if (observationEnded) {
+        return;
+      }
+      observationEnded = true;
+      try {
+        const observation = await observationPromise;
+        if (result) {
+          observation.update({
+            output: result.content,
+            usage: result.usage,
+            metadata: {
+              responseId: result.responseId,
+              toolCalls: result.toolCalls.length,
+              turns: this.options.context.turns.length,
+            },
+          });
+        } else if (error) {
+          observation.update({
+            metadata: {
+              error: error.message,
+            },
+          });
+        } else {
+          observation.update({
+            metadata: {
+              cancelled: true,
+            },
+          });
+        }
+        observation.end();
+      } catch {
+        // Tracing must never break agent execution
+      }
+    };
+
     let resolveResult!: (r: AgentResult) => void;
     let rejectResult!: (e: Error) => void;
     const resultPromise = new Promise<AgentResult>((res, rej) => {
@@ -49,20 +107,29 @@ export class ConversationalAgent {
     const wrappedIterator: AsyncIterableIterator<LLMStreamEvent> = {
       async next() {
         try {
-          const iterResult = await gen.next();
+          const iterResult = await runWithObservationContext(
+            await observationPromise,
+            () => gen.next(),
+          );
           if (iterResult.done) {
+            await finishObservation(iterResult.value);
             resolveResult(iterResult.value);
             return { done: true as const, value: undefined as unknown as LLMStreamEvent };
           }
           return { done: false as const, value: iterResult.value };
         } catch (err) {
           const error = err instanceof Error ? err : new Error(String(err));
+          await finishObservation(undefined, error);
           rejectResult(error);
           throw error;
         }
       },
       async return() {
-        const r = await gen.return(undefined as unknown as AgentResult);
+        const r = await runWithObservationContext(
+          await observationPromise,
+          () => gen.return(undefined as unknown as AgentResult),
+        );
+        await finishObservation();
         return { done: true as const, value: r.value as unknown as LLMStreamEvent };
       },
       [Symbol.asyncIterator]() {
@@ -242,11 +309,20 @@ export class ConversationalAgent {
     stream: AsyncIterable<LLMStreamEvent>,
   ): AsyncGenerator<LLMStreamEvent, LLMResult> {
     let result: LLMResult | null = null;
+    let streamError: Error | null = null;
+
     for await (const event of stream) {
       yield event;
       if (event.type === "response.completed") {
         result = event.result;
       }
+      if (event.type === "error") {
+        streamError = event.error;
+      }
+    }
+
+    if (streamError) {
+      throw streamError;
     }
     if (!result) {
       throw new Error("LLM stream ended without a response.completed event");
