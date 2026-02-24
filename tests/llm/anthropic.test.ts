@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { z } from "zod";
 import type { LLMChatInput } from "../../src/types/llm.js";
+import type { LLMStreamEvent } from "../../src/types/stream-events.js";
 import { RateLimitError, ContextLengthExceededError, LLMApiError } from "../../src/errors.js";
 
 // Hoist mock functions
@@ -51,6 +52,17 @@ function makeClient(overrides = {}) {
 function makeBasicInput(): LLMChatInput {
   return {
     messages: [{ role: "user", content: "Hello" }],
+  };
+}
+
+function makeMockStream(events: unknown[], finalMessage: unknown) {
+  return {
+    async *[Symbol.asyncIterator]() {
+      for (const event of events) {
+        yield event;
+      }
+    },
+    finalMessage: vi.fn().mockResolvedValue(finalMessage),
   };
 }
 
@@ -279,6 +291,112 @@ describe("AnthropicClient", () => {
       await expect(client.invoke(makeBasicInput())).rejects.toThrow(
         LLMApiError,
       );
+    });
+  });
+
+  describe("stream", () => {
+    it("emits tool_call.arguments.done for tool_use blocks", async () => {
+      mockStream.mockReturnValue(
+        makeMockStream(
+          [
+            { type: "message_start", message: { id: "msg-stream-1" } },
+            {
+              type: "content_block_start",
+              index: 0,
+              content_block: { type: "tool_use", id: "tu-1", name: "search" },
+            },
+            {
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "input_json_delta", partial_json: "{\"query\":\"tes" },
+            },
+            {
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "input_json_delta", partial_json: "t\"}" },
+            },
+            { type: "content_block_stop", index: 0 },
+            { type: "message_stop" },
+          ],
+          {
+            id: "msg-stream-1",
+            content: [
+              {
+                type: "tool_use",
+                id: "tu-1",
+                name: "search",
+                input: { query: "test" },
+              },
+            ],
+            stop_reason: "tool_use",
+            type: "message",
+            usage: { input_tokens: 5, output_tokens: 3 },
+          },
+        ),
+      );
+
+      const client = makeClient();
+      const events: LLMStreamEvent[] = [];
+      for await (const event of client.stream(makeBasicInput())) {
+        events.push(event);
+      }
+
+      const done = events.find((e) => e.type === "tool_call.arguments.done");
+      expect(done).toBeDefined();
+      if (done?.type === "tool_call.arguments.done") {
+        expect(done.toolCallId).toBe("tu-1");
+        expect(done.name).toBe("search");
+        expect(done.arguments).toEqual({ query: "test" });
+      }
+    });
+
+    it("emits reasoning.done for thinking blocks", async () => {
+      mockStream.mockReturnValue(
+        makeMockStream(
+          [
+            { type: "message_start", message: { id: "msg-stream-2" } },
+            {
+              type: "content_block_start",
+              index: 0,
+              content_block: { type: "thinking" },
+            },
+            {
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "thinking_delta", thinking: "step-1 " },
+            },
+            {
+              type: "content_block_delta",
+              index: 0,
+              delta: { type: "thinking_delta", thinking: "step-2" },
+            },
+            { type: "content_block_stop", index: 0 },
+            { type: "message_stop" },
+          ],
+          {
+            id: "msg-stream-2",
+            content: [{ type: "text", text: "done" }],
+            stop_reason: "end_turn",
+            type: "message",
+            usage: { input_tokens: 5, output_tokens: 3 },
+          },
+        ),
+      );
+
+      const client = makeClient();
+      const events: LLMStreamEvent[] = [];
+      for await (const event of client.stream(makeBasicInput())) {
+        events.push(event);
+      }
+
+      const deltas = events.filter((e) => e.type === "reasoning.delta");
+      expect(deltas).toHaveLength(2);
+
+      const done = events.find((e) => e.type === "reasoning.done");
+      expect(done).toBeDefined();
+      if (done?.type === "reasoning.done") {
+        expect(done.text).toBe("step-1 step-2");
+      }
     });
   });
 

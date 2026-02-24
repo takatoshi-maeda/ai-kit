@@ -69,19 +69,22 @@ export class AnthropicClient implements LLMClient {
       throw this.mapError(error);
     }
 
-    let responseId: string | undefined;
-    let accumulatedText = "";
+    type ActiveBlock = {
+      type: "text" | "tool_use" | "thinking";
+      toolCallId?: string;
+      name?: string;
+      textBuffer: string;
+      argsBuffer: string;
+      thinkingBuffer: string;
+    };
+
     // Track active content blocks for streaming
-    const activeBlocks = new Map<
-      number,
-      { type: string; toolCallId?: string; name?: string }
-    >();
+    const activeBlocks = new Map<number, ActiveBlock>();
 
     try {
       for await (const event of stream) {
         switch (event.type) {
           case "message_start":
-            responseId = event.message.id;
             yield { type: "response.created", responseId: event.message.id };
             break;
 
@@ -92,11 +95,24 @@ export class AnthropicClient implements LLMClient {
                 type: "tool_use",
                 toolCallId: block.id,
                 name: block.name,
+                textBuffer: "",
+                argsBuffer: "",
+                thinkingBuffer: "",
               });
             } else if (block.type === "thinking") {
-              activeBlocks.set(event.index, { type: "thinking" });
+              activeBlocks.set(event.index, {
+                type: "thinking",
+                textBuffer: "",
+                argsBuffer: "",
+                thinkingBuffer: "",
+              });
             } else {
-              activeBlocks.set(event.index, { type: "text" });
+              activeBlocks.set(event.index, {
+                type: "text",
+                textBuffer: "",
+                argsBuffer: "",
+                thinkingBuffer: "",
+              });
             }
             break;
           }
@@ -104,9 +120,14 @@ export class AnthropicClient implements LLMClient {
           case "content_block_delta": {
             const blockInfo = activeBlocks.get(event.index);
             if (event.delta.type === "text_delta") {
-              accumulatedText += event.delta.text;
+              if (blockInfo?.type === "text") {
+                blockInfo.textBuffer += event.delta.text;
+              }
               yield { type: "text.delta", delta: event.delta.text };
             } else if (event.delta.type === "input_json_delta" && blockInfo) {
+              if (blockInfo.type === "tool_use") {
+                blockInfo.argsBuffer += event.delta.partial_json;
+              }
               yield {
                 type: "tool_call.arguments.delta",
                 toolCallId: blockInfo.toolCallId ?? "",
@@ -114,6 +135,9 @@ export class AnthropicClient implements LLMClient {
                 delta: event.delta.partial_json,
               };
             } else if (event.delta.type === "thinking_delta") {
+              if (blockInfo?.type === "thinking") {
+                blockInfo.thinkingBuffer += event.delta.thinking;
+              }
               yield { type: "reasoning.delta", delta: event.delta.thinking };
             }
             break;
@@ -121,8 +145,33 @@ export class AnthropicClient implements LLMClient {
 
           case "content_block_stop": {
             const stoppedBlock = activeBlocks.get(event.index);
-            if (stoppedBlock?.type === "text" && accumulatedText) {
-              yield { type: "text.done", text: accumulatedText };
+            if (!stoppedBlock) {
+              break;
+            }
+
+            if (stoppedBlock.type === "text" && stoppedBlock.textBuffer) {
+              yield { type: "text.done", text: stoppedBlock.textBuffer };
+            }
+
+            if (stoppedBlock.type === "thinking" && stoppedBlock.thinkingBuffer) {
+              yield { type: "reasoning.done", text: stoppedBlock.thinkingBuffer };
+            }
+
+            if (stoppedBlock.type === "tool_use") {
+              let args: Record<string, unknown> = {};
+              if (stoppedBlock.argsBuffer.trim()) {
+                try {
+                  args = JSON.parse(stoppedBlock.argsBuffer);
+                } catch {
+                  // Keep empty object for malformed partial JSON
+                }
+              }
+              yield {
+                type: "tool_call.arguments.done",
+                toolCallId: stoppedBlock.toolCallId ?? "",
+                name: stoppedBlock.name ?? "",
+                arguments: args,
+              };
             }
             activeBlocks.delete(event.index);
             break;
