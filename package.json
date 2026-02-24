@@ -5,6 +5,16 @@
   "description": "Unified TypeScript package for LLM clients and agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./hono": {
+      "types": "./dist/hono/index.d.ts",
+      "default": "./dist/hono/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
