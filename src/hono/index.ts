@@ -40,6 +40,12 @@ export interface MountMcpRoutesOptions {
   agentDefinitions: AgentDefinition[];
   dataDir?: string;
   basePath?: string;
+  /**
+   * Hook invoked right after each mount object is created and before the MCP
+   * server connects to transport. This allows callers to register custom tools
+   * during bootstrap without relying on post-connect mutation timing.
+   */
+  onMountCreated?: (mount: AgentMount) => Promise<void> | void;
 }
 
 export interface McpInProcessTransport {
@@ -65,6 +71,7 @@ export async function mountMcpRoutes(
   const mounts = await initAgentMounts(
     options.agentDefinitions,
     options.dataDir ?? "data",
+    options.onMountCreated,
   );
   const startedAt = Date.now();
 
@@ -163,8 +170,11 @@ export async function mountMcpRoutes(
       ? body.arguments
       : body;
     const acceptHeader = c.req.header("accept") ?? "";
+    const toolArgsRecord = isRecord(toolArguments) ? toolArguments : {};
+    const streamRequestedByArgs = toolArgsRecord.stream === true;
     const wantsStream = resolvedToolName === "agent.run" ||
-      acceptHeader.includes("text/event-stream");
+      acceptHeader.includes("text/event-stream") ||
+      streamRequestedByArgs;
     const resolvedArguments = wantsStream && resolvedToolName === "agent.run"
       ? { stream: true, ...(toolArguments as Record<string, unknown> ?? {}) }
       : toolArguments ?? {};
@@ -308,6 +318,7 @@ class InProcessMcpTransport implements Transport, McpInProcessTransport {
 async function initAgentMounts(
   definitions: AgentDefinition[],
   dataDir: string,
+  onMountCreated?: (mount: AgentMount) => Promise<void> | void,
 ): Promise<Map<string, AgentMount>> {
   const mounts = new Map<string, AgentMount>();
 
@@ -332,16 +343,22 @@ async function initAgentMounts(
     });
 
     const transport = new InProcessMcpTransport();
-    await mcpServer.connect(transport);
-    await transport.init();
-
-    mounts.set(definition.name, {
+    const mount: AgentMount = {
       definition,
       mcpServer,
       persistence,
       registry,
       transport,
-    });
+    };
+
+    if (onMountCreated) {
+      await onMountCreated(mount);
+    }
+
+    await mcpServer.connect(transport);
+    await transport.init();
+
+    mounts.set(definition.name, mount);
   }
 
   return mounts;
