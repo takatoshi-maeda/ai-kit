@@ -168,10 +168,18 @@ export async function handleAgentRun(
     if (enableStream && deps.sendNotification) {
       // Run with streaming notifications
       const agentStream = agent.stream(message);
-      for await (const event of agentStream) {
-        await forwardStreamEvent(event, deps.sendNotification);
+      let agentResult: Awaited<typeof agentStream.result>;
+      try {
+        for await (const event of agentStream) {
+          await forwardStreamEvent(event, deps.sendNotification);
+        }
+        agentResult = await agentStream.result;
+      } catch (streamError) {
+        // Suppress unhandled rejection from the paired result promise.
+        // agent.stream() resolves/rejects via both iterator and result channels.
+        agentStream.result.catch(() => {});
+        throw streamError;
       }
-      const agentResult = await agentStream.result;
 
       result = {
         sessionId,
