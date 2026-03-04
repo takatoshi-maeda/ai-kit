@@ -7,7 +7,7 @@ import { ConversationalAgent } from "../../../../src/agent/conversational.js";
 import type { McpPersistence } from "../../../../src/agent/mcp/persistence.js";
 import type { AgentContext, ConversationHistory } from "../../../../src/types/agent.js";
 import type { LLMClient } from "../../../../src/types/agent.js";
-import type { LLMResult, LLMUsage } from "../../../../src/types/llm.js";
+import type { ContentPart, LLMResult, LLMUsage } from "../../../../src/types/llm.js";
 import type { LLMStreamEvent } from "../../../../src/types/stream-events.js";
 import type { ModelCapabilities } from "../../../../src/types/model.js";
 
@@ -186,6 +186,66 @@ describe("agent tools", () => {
         "Hello",
         expect.any(String),
         expect.any(String),
+      );
+    });
+
+    it("passes multimodal input via input and persists userContent", async () => {
+      const capturedInputs: Array<string | ContentPart[]> = [];
+      function multimodalAgent(ctx: AgentContext): ConversationalAgent {
+        const client: LLMClient = {
+          model: "test-model",
+          provider: "openai",
+          capabilities: defaultCapabilities,
+          async invoke() {
+            throw new Error("invoke should not be called");
+          },
+          async *stream(input) {
+            let userMessage = input.messages[0];
+            for (let index = input.messages.length - 1; index >= 0; index -= 1) {
+              if (input.messages[index]?.role === "user") {
+                userMessage = input.messages[index];
+                break;
+              }
+            }
+            capturedInputs.push(userMessage?.content ?? "");
+            yield {
+              type: "response.completed",
+              result: makeResult("received multimodal"),
+            };
+          },
+          estimateTokens: () => 10,
+        };
+        return new ConversationalAgent({
+          context: ctx,
+          client,
+          instructions: "Multimodal agent",
+        });
+      }
+
+      const registry = new AgentRegistry({
+        agents: [{ create: multimodalAgent, agentId: "multi" }],
+      });
+      const persistence = stubPersistence();
+      const deps: AgentToolDeps = { registry, persistence };
+      const input: ContentPart[] = [
+        {
+          type: "image",
+          source: { type: "url", url: "https://example.com/image.png" },
+        },
+        { type: "text", text: "Describe this image" },
+      ];
+
+      const result = await handleAgentRun(deps, { agentId: "multi", input });
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.status).toBe("success");
+      expect(capturedInputs).toEqual([input]);
+      expect(persistence.appendConversationTurn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          userContent: input,
+        }),
+        undefined,
       );
     });
 

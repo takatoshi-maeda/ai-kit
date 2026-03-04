@@ -58,18 +58,23 @@ describe("JsonlMcpPersistence", () => {
     });
 
     it("tracks in-progress run state", async () => {
+      const userContent = [
+        { type: "image", source: { type: "url", url: "https://example.com/task.png" } },
+      ] as const;
       await persistence.appendRunState("sess-1", {
         runId: "run-1",
         status: "started",
         startedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
         userMessage: "Working...",
+        userContent: [...userContent],
       });
 
       const conversation = await persistence.readConversation("sess-1");
       expect(conversation!.status).toBe("progress");
       expect(conversation!.inProgress).toBeDefined();
       expect(conversation!.inProgress!.runId).toBe("run-1");
+      expect(conversation!.inProgress!.userContent).toEqual(userContent);
     });
 
     it("marks conversation idle after success run state", async () => {
@@ -91,7 +96,14 @@ describe("JsonlMcpPersistence", () => {
     });
 
     it("lists conversation summaries", async () => {
-      await persistence.appendConversationTurn("sess-1", makeTurn(), "Chat 1");
+      const userContent = [
+        { type: "text", text: "Hello from content parts" },
+      ] as const;
+      await persistence.appendConversationTurn(
+        "sess-1",
+        makeTurn({ userContent: [...userContent], userMessage: "Hello from content parts" }),
+        "Chat 1",
+      );
       await persistence.appendConversationTurn("sess-2", makeTurn({ userMessage: "Second" }), "Chat 2");
 
       const summaries = await persistence.listConversationSummaries();
@@ -100,6 +112,8 @@ describe("JsonlMcpPersistence", () => {
       const ids = summaries.map((s) => s.sessionId);
       expect(ids).toContain("sess-1");
       expect(ids).toContain("sess-2");
+      const first = summaries.find((summary) => summary.sessionId === "sess-1");
+      expect(first?.latestUserContent).toEqual(userContent);
     });
 
     it("respects limit on summaries", async () => {

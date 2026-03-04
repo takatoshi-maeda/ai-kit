@@ -5,7 +5,12 @@ import { AgentContextImpl } from "../../src/agent/context.js";
 import { defineTool } from "../../src/llm/tool/define.js";
 import { MaxTurnsExceededError } from "../../src/errors.js";
 import type { LLMClient, ConversationHistory } from "../../src/types/agent.js";
-import type { LLMResult, LLMUsage, LLMChatInput } from "../../src/types/llm.js";
+import type {
+  ContentPart,
+  LLMResult,
+  LLMUsage,
+  LLMChatInput,
+} from "../../src/types/llm.js";
 import type { LLMStreamEvent } from "../../src/types/stream-events.js";
 import type { ModelCapabilities } from "../../src/types/model.js";
 
@@ -27,6 +32,28 @@ function stubHistory(): ConversationHistory {
       messages.length = 0;
     },
   };
+}
+
+function trackingHistory(): {
+  history: ConversationHistory;
+  messages: { role: string; content: string | unknown[] }[];
+} {
+  const messages: { role: string; content: string | unknown[] }[] = [];
+  const history: ConversationHistory = {
+    async getMessages() {
+      return [];
+    },
+    async addMessage(msg) {
+      messages.push(msg);
+    },
+    async toLLMMessages() {
+      return [];
+    },
+    async clear() {
+      messages.length = 0;
+    },
+  };
+  return { history, messages };
 }
 
 function emptyUsage(): LLMUsage {
@@ -119,6 +146,32 @@ describe("ConversationalAgent", () => {
       expect(agentResult.responseId).toBe("resp-1");
       expect(agentResult.usage.totalTokens).toBe(15);
       expect(agentResult.raw).toBe(result);
+    });
+
+    it("accepts multimodal input and stores it in conversation history", async () => {
+      const result = makeResult({ content: "Acknowledged image input." });
+      const client = mockClient([result]);
+      const tracked = trackingHistory();
+      const context = new AgentContextImpl({ history: tracked.history });
+      const agent = new ConversationalAgent({
+        context,
+        client,
+        instructions: "You are helpful.",
+      });
+
+      const multimodalInput: ContentPart[] = [
+        {
+          type: "image",
+          source: { type: "url", url: "https://example.com/screenshot.png" },
+        },
+        { type: "text", text: "What is shown here?" },
+      ];
+      const agentResult = await agent.invoke(multimodalInput);
+
+      expect(agentResult.content).toBe("Acknowledged image input.");
+      expect(tracked.messages[0]?.role).toBe("user");
+      expect(tracked.messages[0]?.content).toEqual(multimodalInput);
+      expect(tracked.messages[1]?.role).toBe("assistant");
     });
 
     it("handles multi-turn tool call loop", async () => {

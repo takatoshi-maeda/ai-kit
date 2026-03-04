@@ -5,7 +5,13 @@ import type {
   AgentResult,
   TurnResult,
 } from "../types/agent.js";
-import type { LLMChatInput, LLMMessage, LLMResult, LLMUsage } from "../types/llm.js";
+import type {
+  ContentPart,
+  LLMChatInput,
+  LLMMessage,
+  LLMResult,
+  LLMUsage,
+} from "../types/llm.js";
 import type { LLMStreamEvent } from "../types/stream-events.js";
 import type { LLMToolCall, ToolDefinition } from "../types/tool.js";
 import { ToolExecutor } from "../llm/tool/executor.js";
@@ -39,7 +45,7 @@ export class ConversationalAgent {
   }
 
   stream(
-    input: string,
+    input: string | ContentPart[],
     additionalInstructions?: string,
   ): AgentStream {
     const observationName =
@@ -149,7 +155,7 @@ export class ConversationalAgent {
   }
 
   async invoke(
-    input: string,
+    input: string | ContentPart[],
     additionalInstructions?: string,
   ): Promise<AgentResult> {
     const agentStream = this.stream(input, additionalInstructions);
@@ -178,7 +184,7 @@ export class ConversationalAgent {
   }
 
   private async *runLoop(
-    input: string,
+    input: string | ContentPart[],
     additionalInstructions?: string,
   ): AsyncGenerator<LLMStreamEvent, AgentResult> {
     const {

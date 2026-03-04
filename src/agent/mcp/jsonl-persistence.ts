@@ -89,6 +89,7 @@ export class JsonlMcpPersistence implements McpPersistence {
         startedAt: latestRunState.startedAt,
         updatedAt: latestRunState.updatedAt,
         userMessage: latestRunState.userMessage,
+        userContent: latestRunState.userContent,
         assistantMessage: latestRunState.assistantMessage,
         timeline: latestRunState.timeline,
         agentId: latestRunState.agentId,
@@ -117,6 +118,10 @@ export class JsonlMcpPersistence implements McpPersistence {
         conversation.turns.length > 0
           ? conversation.turns[conversation.turns.length - 1].userMessage
           : conversation.inProgress?.userMessage;
+      const latestUserContent =
+        conversation.turns.length > 0
+          ? conversation.turns[conversation.turns.length - 1].userContent
+          : conversation.inProgress?.userContent;
 
       summaries.push({
         sessionId: conversation.sessionId,
@@ -128,6 +133,7 @@ export class JsonlMcpPersistence implements McpPersistence {
         activeUpdatedAt: conversation.inProgress?.updatedAt,
         turnCount: conversation.turns.length,
         latestUserMessage,
+        latestUserContent,
       });
     }
 

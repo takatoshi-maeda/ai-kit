@@ -42,7 +42,17 @@ describe("conversations tools", () => {
 
     it("returns conversations", async () => {
       await persistence.appendConversationTurn("s1", makeTurn(), "Chat 1");
-      await persistence.appendConversationTurn("s2", makeTurn("Bye"), "Chat 2");
+      await persistence.appendConversationTurn(
+        "s2",
+        {
+          ...makeTurn("Bye"),
+          userContent: [
+            { type: "image", source: { type: "url", url: "https://example.com/bye.png" } },
+            { type: "text", text: "Bye" },
+          ],
+        },
+        "Chat 2",
+      );
 
       const result = await handleConversationsList(persistence, {});
       const parsed = JSON.parse(result.content[0].text);
@@ -54,12 +64,20 @@ describe("conversations tools", () => {
       expect(parsed.sessions[0]).toHaveProperty("activeUpdatedAt");
       expect(parsed.sessions[0]).toHaveProperty("turnCount");
       expect(parsed.sessions[0]).toHaveProperty("latestUserMessage");
+      expect(parsed.sessions[0]).toHaveProperty("latestUserContent");
     });
   });
 
   describe("handleConversationsGet", () => {
     it("returns conversation by session ID", async () => {
-      await persistence.appendConversationTurn("s1", makeTurn(), "Test");
+      const userContent = [
+        { type: "image", source: { type: "url", url: "https://example.com/test.png" } },
+      ] as const;
+      await persistence.appendConversationTurn(
+        "s1",
+        { ...makeTurn(), userContent: [...userContent] },
+        "Test",
+      );
 
       const result = await handleConversationsGet(persistence, {
         sessionId: "s1",
@@ -70,7 +88,9 @@ describe("conversations tools", () => {
       expect(parsed.turns).toHaveLength(1);
       expect(parsed.turns[0]).toHaveProperty("turnId");
       expect(parsed.turns[0]).toHaveProperty("userMessage");
+      expect(parsed.turns[0]).toHaveProperty("userContent");
       expect(parsed.turns[0]).toHaveProperty("assistantMessage");
+      expect(parsed.turns[0].userContent).toEqual(userContent);
       expect(result.structuredContent).toEqual(parsed);
       expect(result.isError).toBe(false);
     });

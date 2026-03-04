@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { AgentContext } from "../types/agent.js";
 import type { LLMClient } from "../types/agent.js";
+import type { ContentPart } from "../types/llm.js";
 import type { ConversationalAgent } from "./conversational.js";
 
 export interface AgentRouterOptions {
@@ -26,7 +27,7 @@ export class AgentRouter {
     this.options = options;
   }
 
-  async resolve(input: string): Promise<ConversationalAgent> {
+  async resolve(input: string | ContentPart[]): Promise<ConversationalAgent> {
     const { context, client, instructions, agents } = this.options;
 
     // Single agent — no LLM call needed

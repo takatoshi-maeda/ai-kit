@@ -1,5 +1,6 @@
 import type { AgentContext } from "../../types/agent.js";
 import type { ConversationalAgent } from "../conversational.js";
+import type { ContentPart } from "../../types/llm.js";
 
 /** タイムラインアイテム（UI 用進捗表示） */
 export type TimelineItem =
@@ -32,6 +33,7 @@ export interface ConversationTurn {
   runId: string;
   timestamp: string;
   userMessage: string;
+  userContent?: string | ContentPart[];
   assistantMessage: string;
   status: "success" | "error" | "cancelled";
   errorMessage?: string;
@@ -54,6 +56,7 @@ export interface Conversation {
     startedAt: string;
     updatedAt: string;
     userMessage?: string;
+    userContent?: string | ContentPart[];
     assistantMessage?: string;
     timeline?: TimelineItem[];
     agentId?: string;
@@ -73,6 +76,7 @@ export interface ConversationSummary {
   activeUpdatedAt?: string;
   turnCount: number;
   latestUserMessage?: string;
+  latestUserContent?: string | ContentPart[];
 }
 
 /** 使用量サマリー */
@@ -100,6 +104,7 @@ export interface RunState {
   startedAt: string;
   updatedAt: string;
   userMessage?: string;
+  userContent?: string | ContentPart[];
   assistantMessage?: string;
   timeline?: TimelineItem[];
   agentId?: string;

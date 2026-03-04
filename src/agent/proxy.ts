@@ -1,5 +1,6 @@
 import type { LLMStreamEvent } from "../types/stream-events.js";
 import type { AgentResult } from "../types/agent.js";
+import type { ContentPart } from "../types/llm.js";
 import type { AgentStream } from "./conversational.js";
 import { AgentRouter, type AgentRouterOptions } from "./router.js";
 
@@ -16,7 +17,7 @@ export class AgentProxy {
     this.router = new AgentRouter(options);
   }
 
-  run(input: string): AgentStream {
+  run(input: string | ContentPart[]): AgentStream {
     let resolveResult!: (r: AgentResult) => void;
     let rejectResult!: (e: Error) => void;
     const resultPromise = new Promise<AgentResult>((res, rej) => {

@@ -1,13 +1,52 @@
 import { z } from "zod";
 import type { AgentRegistry } from "../agent-registry.js";
-import type { McpPersistence, ConversationTurn, RunState } from "../persistence.js";
+import type { McpPersistence, ConversationTurn } from "../persistence.js";
 import { AgentContextImpl } from "../../context.js";
 import { InMemoryHistory } from "../../conversation/memory-history.js";
 import type { LLMStreamEvent } from "../../../types/stream-events.js";
+import type { ContentPart } from "../../../types/llm.js";
+
+const ImageSourceSchema = z.union([
+  z.object({
+    type: z.literal("base64"),
+    mediaType: z.string(),
+    data: z.string(),
+  }),
+  z.object({
+    type: z.literal("url"),
+    url: z.string(),
+  }),
+]);
+
+const ContentPartSchema = z.union([
+  z.object({
+    type: z.literal("text"),
+    text: z.string(),
+  }),
+  z.object({
+    type: z.literal("image"),
+    source: ImageSourceSchema,
+  }),
+  z.object({
+    type: z.literal("audio"),
+    data: z.string(),
+    format: z.string(),
+  }),
+]);
+
+const ContentPartArraySchema = z.array(ContentPartSchema);
+
+const UserInputSchema = z.union([z.string(), ContentPartArraySchema]);
 
 /** agent.run ツールの入力パラメータ */
 export const AgentRunParamsSchema = z.object({
-  message: z.string().describe("The user message to send to the agent"),
+  message: z
+    .string()
+    .optional()
+    .describe("The user message to send to the agent (legacy string input)"),
+  input: UserInputSchema
+    .optional()
+    .describe("The user input to send to the agent (string or multimodal content parts)"),
   idempotencyKey: z.string().optional().describe("Idempotency key for deduplication"),
   sessionId: z.string().optional().describe("Session ID for conversation continuity"),
   title: z.string().optional().describe("Title for the conversation"),
@@ -90,6 +129,7 @@ export async function handleAgentRun(
 }> {
   const {
     message,
+    input,
     idempotencyKey,
     sessionId: requestedSessionId,
     title,
@@ -102,6 +142,13 @@ export async function handleAgentRun(
   const sessionId = requestedSessionId ?? crypto.randomUUID();
   const runId = crypto.randomUUID();
   const turnId = crypto.randomUUID();
+  const userInput = resolveUserInput(input, message);
+
+  if (userInput === undefined) {
+    throw new Error("Either message or input must be provided");
+  }
+
+  const userMessagePreview = toUserMessagePreview(userInput);
 
   // Check idempotency
   if (idempotencyKey) {
@@ -135,7 +182,8 @@ export async function handleAgentRun(
     status: "started",
     startedAt,
     updatedAt: startedAt,
-    userMessage: message,
+    userMessage: userMessagePreview,
+    userContent: userInput,
     agentId,
   });
 
@@ -150,7 +198,7 @@ export async function handleAgentRun(
   }
 
   // Record input message
-  await deps.persistence.appendInputMessageHistory(message, sessionId, runId);
+  await deps.persistence.appendInputMessageHistory(userMessagePreview, sessionId, runId);
 
   // Create agent context and run
   const entry = deps.registry.get(agentId);
@@ -167,7 +215,7 @@ export async function handleAgentRun(
   try {
     if (enableStream && deps.sendNotification) {
       // Run with streaming notifications
-      const agentStream = agent.stream(message);
+      const agentStream = agent.stream(userInput);
       let agentResult: Awaited<typeof agentStream.result>;
       try {
         for await (const event of agentStream) {
@@ -214,7 +262,7 @@ export async function handleAgentRun(
       });
     } else {
       // Non-streaming run
-      const agentResult = await agent.invoke(message);
+      const agentResult = await agent.invoke(userInput);
 
       result = {
         sessionId,
@@ -242,7 +290,8 @@ export async function handleAgentRun(
       turnId,
       runId,
       timestamp: new Date().toISOString(),
-      userMessage: message,
+      userMessage: userMessagePreview,
+      userContent: userInput,
       assistantMessage: result.message,
       status: "success",
       agentId,
@@ -256,7 +305,8 @@ export async function handleAgentRun(
       status: "success",
       startedAt,
       updatedAt: new Date().toISOString(),
-      userMessage: message,
+      userMessage: userMessagePreview,
+      userContent: userInput,
       assistantMessage: result.message,
       agentId,
     });
@@ -280,7 +330,8 @@ export async function handleAgentRun(
       turnId,
       runId,
       timestamp: new Date().toISOString(),
-      userMessage: message,
+      userMessage: userMessagePreview,
+      userContent: userInput,
       assistantMessage: "",
       status: "error",
       errorMessage,
@@ -295,7 +346,8 @@ export async function handleAgentRun(
       status: "error",
       startedAt,
       updatedAt: new Date().toISOString(),
-      userMessage: message,
+      userMessage: userMessagePreview,
+      userContent: userInput,
       agentId,
     });
 
@@ -403,4 +455,33 @@ function toAgentRunWireResult(
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function resolveUserInput(
+  input: AgentRunParams["input"],
+  message: AgentRunParams["message"],
+): string | ContentPart[] | undefined {
+  return input ?? message;
+}
+
+function toUserMessagePreview(input: string | ContentPart[]): string {
+  if (typeof input === "string") {
+    return input;
+  }
+  const preview = input
+    .map((part) => {
+      switch (part.type) {
+        case "text":
+          return part.text;
+        case "image":
+          if (part.source.type === "url") {
+            return `[image:url:${part.source.url}]`;
+          }
+          return `[image:base64:${part.source.mediaType}]`;
+        case "audio":
+          return `[audio:${part.format}]`;
+      }
+    })
+    .join(" ");
+  return preview.trim();
 }

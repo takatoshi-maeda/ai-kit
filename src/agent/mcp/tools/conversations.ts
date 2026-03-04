@@ -32,6 +32,7 @@ export async function handleConversationsList(
     activeUpdatedAt: summary.activeUpdatedAt ?? null,
     turnCount: summary.turnCount,
     latestUserMessage: summary.latestUserMessage ?? null,
+    latestUserContent: summary.latestUserContent ?? null,
   }));
   const payload = { sessions };
   return {
@@ -102,6 +103,7 @@ function formatConversationForWire(
     runId: turn.runId,
     timestamp: turn.timestamp,
     userMessage: turn.userMessage,
+    userContent: turn.userContent ?? null,
     assistantMessage: turn.assistantMessage,
     status: turn.status,
     errorMessage: turn.errorMessage ?? null,
@@ -117,6 +119,7 @@ function formatConversationForWire(
         startedAt: conversation.inProgress.startedAt,
         updatedAt: conversation.inProgress.updatedAt,
         userMessage: conversation.inProgress.userMessage ?? null,
+        userContent: conversation.inProgress.userContent ?? null,
         assistantMessage: conversation.inProgress.assistantMessage ?? null,
         timeline: conversation.inProgress.timeline ?? null,
         agentId: conversation.inProgress.agentId ?? null,
