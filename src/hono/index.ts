@@ -393,6 +393,11 @@ function sseResponseFromRequest(
 ): Response {
   const notificationToken = extractNotificationToken(message);
   let streamClosed = false;
+  let unsubscribe: (() => void) | null = null;
+  let requestId: string | number | null = null;
+  if (typeof message.id === "string" || typeof message.id === "number") {
+    requestId = message.id;
+  }
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const send = (payload: unknown) => {
@@ -400,7 +405,7 @@ function sseResponseFromRequest(
         controller.enqueue(encoder.encode(formatSse(payload)));
       };
 
-      const unsubscribe = transport.subscribe((incoming) => {
+      unsubscribe = transport.subscribe((incoming) => {
         const incomingRecord = incoming as unknown as Record<string, unknown>;
         if (shouldForwardNotification(incomingRecord, notificationToken)) {
           send(incoming);
@@ -410,7 +415,8 @@ function sseResponseFromRequest(
       const finalize = () => {
         if (streamClosed) return;
         streamClosed = true;
-        unsubscribe();
+        unsubscribe?.();
+        unsubscribe = null;
         controller.close();
       };
 
@@ -434,7 +440,22 @@ function sseResponseFromRequest(
         });
     },
     cancel() {
+      unsubscribe?.();
+      unsubscribe = null;
       streamClosed = true;
+      if (requestId === null) {
+        return;
+      }
+      // Propagate HTTP/SSE disconnect to the underlying MCP request so tool
+      // handlers can observe extra.signal.aborted and stop long-running work.
+      transport.notify({
+        jsonrpc: "2.0",
+        method: "notifications/cancelled",
+        params: {
+          requestId,
+          reason: "client disconnected",
+        },
+      } as unknown as JSONRPCMessage);
     },
   });
 
