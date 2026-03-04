@@ -31,6 +31,10 @@ export interface McpServerOptions {
   agentRegistry?: AgentRegistry;
   /** 永続化バックエンド */
   persistence: McpPersistence;
+  /** base64 画像を正規化して保存する公開アセット用ディレクトリ */
+  publicAssetsDir?: string;
+  /** 公開アセット配信用の URL ベースパス */
+  publicAssetsBasePath?: string;
 }
 
 /**
@@ -42,6 +46,8 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
     serverVersion = "0.1.0",
     agentRegistry,
     persistence,
+    publicAssetsDir,
+    publicAssetsBasePath,
   } = options;
 
   const server = new SdkMcpServer(
@@ -67,6 +73,8 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
       const deps: AgentToolDeps = {
         registry: agentRegistry,
         persistence,
+        publicAssetsDir,
+        publicAssetsBasePath,
         sendNotification: async (method, params) => {
           const token = parsed.notificationToken;
           const payload: Record<string, unknown> = { ...params };
@@ -97,9 +105,15 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
   server.registerTool("conversations.get", {
     description: "Get a conversation by session ID",
     inputSchema: getShape,
-  }, async (args) => {
+  }, async (args, extra) => {
     const parsed = ConversationsGetParamsSchema.parse(args);
-    return handleConversationsGet(persistence, parsed);
+    const isHttpTransport = parsed._httpTransport === true || extra.requestInfo !== undefined;
+    return handleConversationsGet(persistence, {
+      ...parsed,
+      _httpTransport: isHttpTransport,
+    }, {
+      publicAssetsBasePath,
+    });
   });
 
   const deleteShape = extractShape(ConversationsDeleteParamsSchema);

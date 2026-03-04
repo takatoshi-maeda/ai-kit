@@ -1,4 +1,6 @@
 import { z } from "zod";
+import * as fs from "node:fs/promises";
+import * as path from "node:path";
 import type { AgentRegistry } from "../agent-registry.js";
 import type { McpPersistence, ConversationTurn } from "../persistence.js";
 import { AgentContextImpl } from "../../context.js";
@@ -95,7 +97,25 @@ export interface AgentToolDeps {
   registry: AgentRegistry;
   persistence: McpPersistence;
   sendNotification?: (method: string, params: Record<string, unknown>) => Promise<void>;
+  publicAssetsDir?: string;
+  publicAssetsBasePath?: string;
 }
+
+const MAX_BASE64_IMAGE_BYTES_PER_TURN = 2 * 1024 * 1024;
+
+const IMAGE_MEDIA_TYPE_TO_EXTENSION: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
+const IMAGE_EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
 
 export async function handleAgentList(
   deps: AgentToolDeps,
@@ -142,13 +162,31 @@ export async function handleAgentRun(
   const sessionId = requestedSessionId ?? crypto.randomUUID();
   const runId = crypto.randomUUID();
   const turnId = crypto.randomUUID();
-  const userInput = resolveUserInput(input, message);
+  const resolvedUserInput = resolveUserInput(input, message);
 
-  if (userInput === undefined) {
+  if (resolvedUserInput === undefined) {
     throw new Error("Either message or input must be provided");
   }
 
-  const userMessagePreview = toUserMessagePreview(userInput);
+  const normalized = await normalizeUserInputForPersistence(
+    resolvedUserInput,
+    {
+      sessionId,
+      publicAssetsDir: deps.publicAssetsDir,
+      publicAssetsBasePath:
+        deps.publicAssetsBasePath ?? `/api/mcp/${encodeURIComponent(agentId)}/public`,
+    },
+  );
+  const publicAssetsBasePath =
+    deps.publicAssetsBasePath ?? `/api/mcp/${encodeURIComponent(agentId)}/public`;
+  const userInput = normalized.input;
+  const userMessagePreview = toUserMessagePreview(normalized.input);
+  // We persist userContent as public URLs, while converting local public asset URLs
+  // to data URLs only for upstream LLM APIs that reject localhost/relative URLs.
+  const llmInput = await normalizeUserInputForLlm(userInput, {
+    publicAssetsDir: deps.publicAssetsDir,
+    publicAssetsBasePath,
+  });
 
   // Check idempotency
   if (idempotencyKey) {
@@ -215,7 +253,7 @@ export async function handleAgentRun(
   try {
     if (enableStream && deps.sendNotification) {
       // Run with streaming notifications
-      const agentStream = agent.stream(userInput);
+      const agentStream = agent.stream(llmInput);
       let agentResult: Awaited<typeof agentStream.result>;
       try {
         for await (const event of agentStream) {
@@ -262,7 +300,7 @@ export async function handleAgentRun(
       });
     } else {
       // Non-streaming run
-      const agentResult = await agent.invoke(userInput);
+      const agentResult = await agent.invoke(llmInput);
 
       result = {
         sessionId,
@@ -484,4 +522,287 @@ function toUserMessagePreview(input: string | ContentPart[]): string {
     })
     .join(" ");
   return preview.trim();
+}
+
+interface NormalizeUserInputOptions {
+  sessionId: string;
+  publicAssetsDir?: string;
+  publicAssetsBasePath: string;
+}
+
+interface NormalizeUserInputForLlmOptions {
+  publicAssetsDir?: string;
+  publicAssetsBasePath: string;
+}
+
+async function normalizeUserInputForPersistence(
+  input: string | ContentPart[],
+  options: NormalizeUserInputOptions,
+): Promise<{ input: string | ContentPart[] }> {
+  if (typeof input === "string") {
+    return { input };
+  }
+
+  let totalImageBytes = 0;
+  const normalized: ContentPart[] = [];
+  for (const part of input) {
+    if (part.type !== "image") {
+      normalized.push(part);
+      continue;
+    }
+
+    let resolvedMediaType: string | null = null;
+    let resolvedBase64Data: string | null = null;
+
+    if (part.source.type === "base64") {
+      resolvedMediaType = normalizeMediaType(part.source.mediaType);
+      resolvedBase64Data = part.source.data;
+    } else if (part.source.type === "url") {
+      const parsedDataUrl = parseImageBase64DataUrl(part.source.url);
+      if (!parsedDataUrl) {
+        normalized.push(part);
+        continue;
+      }
+      resolvedMediaType = parsedDataUrl.mediaType;
+      resolvedBase64Data = parsedDataUrl.data;
+    }
+
+    if (!options.publicAssetsDir) {
+      throw new Error("base64 image input is not supported without a configured public assets directory");
+    }
+    if (!resolvedMediaType || resolvedBase64Data === null) {
+      normalized.push(part);
+      continue;
+    }
+    const mediaType = resolvedMediaType;
+    const extension = IMAGE_MEDIA_TYPE_TO_EXTENSION[mediaType];
+    if (!extension) {
+      throw new Error(`unsupported image mediaType: ${mediaType}`);
+    }
+
+    const imageBytes = decodeBase64Data(resolvedBase64Data);
+    totalImageBytes += imageBytes.length;
+    if (totalImageBytes > MAX_BASE64_IMAGE_BYTES_PER_TURN) {
+      throw new Error(
+        `base64 image payload exceeds ${MAX_BASE64_IMAGE_BYTES_PER_TURN} bytes per turn`,
+      );
+    }
+    if (!matchesImageMediaType(imageBytes, mediaType)) {
+      throw new Error(`image mediaType does not match binary content: ${mediaType}`);
+    }
+
+    const now = new Date();
+    const year = String(now.getUTCFullYear());
+    const month = String(now.getUTCMonth() + 1).padStart(2, "0");
+    const day = String(now.getUTCDate()).padStart(2, "0");
+    const sessionSegment = toSafePathSegment(options.sessionId);
+    const fileName = `${crypto.randomUUID()}.${extension}`;
+
+    const fsPath = path.join(
+      options.publicAssetsDir,
+      "uploads",
+      year,
+      month,
+      day,
+      sessionSegment,
+      fileName,
+    );
+    await fs.mkdir(path.dirname(fsPath), { recursive: true });
+    await fs.writeFile(fsPath, imageBytes);
+
+    const storedFilePath = `uploads/${year}/${month}/${day}/${sessionSegment}/${fileName}`;
+    normalized.push({
+      type: "image",
+      source: { type: "url", url: storedFilePath },
+    });
+  }
+
+  return { input: normalized };
+}
+
+function parseImageBase64DataUrl(url: string): { mediaType: string; data: string } | null {
+  if (!url.startsWith("data:")) {
+    return null;
+  }
+  const commaIndex = url.indexOf(",");
+  if (commaIndex <= 5) {
+    throw new Error("invalid data URL image payload");
+  }
+  const header = url.slice(5, commaIndex);
+  if (!/;base64(?:;|$)/i.test(header)) {
+    return null;
+  }
+  const mediaType = normalizeMediaType(header.split(";")[0] ?? "");
+  return { mediaType, data: url.slice(commaIndex + 1) };
+}
+
+async function normalizeUserInputForLlm(
+  input: string | ContentPart[],
+  options: NormalizeUserInputForLlmOptions,
+): Promise<string | ContentPart[]> {
+  if (typeof input === "string") {
+    return input;
+  }
+
+  const normalized: ContentPart[] = [];
+  for (const part of input) {
+    if (part.type !== "image" || part.source.type !== "url") {
+      normalized.push(part);
+      continue;
+    }
+    if (part.source.url.startsWith("data:")) {
+      normalized.push(part);
+      continue;
+    }
+
+    const relativePath = resolveStoredImageRelativePath(
+      part.source.url,
+      options.publicAssetsBasePath,
+    );
+    if (!relativePath) {
+      normalized.push(part);
+      continue;
+    }
+    if (!options.publicAssetsDir) {
+      throw new Error("local public image URL input is not supported without a configured public assets directory");
+    }
+
+    const fullPath = resolveSafePublicAssetFilePath(options.publicAssetsDir, relativePath);
+    const extension = path.extname(fullPath).slice(1).toLowerCase();
+    const mediaType = IMAGE_EXTENSION_TO_MEDIA_TYPE[extension];
+    if (!mediaType) {
+      throw new Error(`unsupported image extension for local asset URL: .${extension}`);
+    }
+
+    const bytes = await fs.readFile(fullPath);
+    const dataUrl = `data:${mediaType};base64,${bytes.toString("base64")}`;
+    normalized.push({
+      type: "image",
+      source: {
+        type: "url",
+        url: dataUrl,
+      },
+    });
+  }
+
+  return normalized;
+}
+
+function resolveStoredImageRelativePath(url: string, publicAssetsBasePath: string): string | null {
+  if (isStoredAssetPath(url)) {
+    return url;
+  }
+  return resolvePublicAssetRelativePath(url, publicAssetsBasePath);
+}
+
+function isStoredAssetPath(value: string): boolean {
+  // Stored JSONL values use a path-like representation under the public root.
+  return /^uploads\/[^?#]+$/.test(value);
+}
+
+function resolvePublicAssetRelativePath(url: string, publicAssetsBasePath: string): string | null {
+  const normalizedBasePath = publicAssetsBasePath.replace(/\/+$/, "");
+  if (url.startsWith(`${normalizedBasePath}/`)) {
+    return url.slice(normalizedBasePath.length + 1);
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!isLocalAddress(parsed.hostname)) {
+    return null;
+  }
+  if (!parsed.pathname.startsWith(`${normalizedBasePath}/`)) {
+    return null;
+  }
+  return parsed.pathname.slice(normalizedBasePath.length + 1);
+}
+
+function resolveSafePublicAssetFilePath(publicAssetsDir: string, relativePath: string): string {
+  const normalized = path.posix.normalize(`/${relativePath}`);
+  const segments = normalized.split("/").filter((segment) => segment.length > 0);
+  if (
+    segments.length === 0 ||
+    segments.some((segment) => segment === "." || segment === "..")
+  ) {
+    throw new Error("invalid local public image URL path");
+  }
+
+  const root = path.resolve(publicAssetsDir);
+  const fullPath = path.resolve(root, ...segments);
+  if (fullPath !== root && !fullPath.startsWith(`${root}${path.sep}`)) {
+    throw new Error("local public image URL path escapes public directory");
+  }
+  return fullPath;
+}
+
+function isLocalAddress(hostname: string): boolean {
+  const normalized = hostname.trim().toLowerCase();
+  return normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1";
+}
+
+function normalizeMediaType(mediaType: string): string {
+  return mediaType.trim().toLowerCase().split(";")[0] ?? "";
+}
+
+function decodeBase64Data(data: string): Buffer {
+  const normalized = data.replace(/\s+/g, "");
+  if (
+    normalized.length === 0 ||
+    normalized.length % 4 !== 0 ||
+    !/^[A-Za-z0-9+/]*={0,2}$/.test(normalized)
+  ) {
+    throw new Error("invalid base64 image payload");
+  }
+  return Buffer.from(normalized, "base64");
+}
+
+function toSafePathSegment(value: string): string {
+  const safe = value.replace(/[^A-Za-z0-9._-]/g, "_");
+  return safe.length > 0 ? safe : "session";
+}
+
+function matchesImageMediaType(bytes: Buffer, mediaType: string): boolean {
+  switch (mediaType) {
+    case "image/png":
+      return bytes.length >= 8 &&
+        bytes[0] === 0x89 &&
+        bytes[1] === 0x50 &&
+        bytes[2] === 0x4e &&
+        bytes[3] === 0x47 &&
+        bytes[4] === 0x0d &&
+        bytes[5] === 0x0a &&
+        bytes[6] === 0x1a &&
+        bytes[7] === 0x0a;
+    case "image/jpeg":
+      return bytes.length >= 3 &&
+        bytes[0] === 0xff &&
+        bytes[1] === 0xd8 &&
+        bytes[2] === 0xff;
+    case "image/gif":
+      return bytes.length >= 6 &&
+        bytes[0] === 0x47 &&
+        bytes[1] === 0x49 &&
+        bytes[2] === 0x46 &&
+        bytes[3] === 0x38 &&
+        (bytes[4] === 0x37 || bytes[4] === 0x39) &&
+        bytes[5] === 0x61;
+    case "image/webp":
+      return bytes.length >= 12 &&
+        bytes[0] === 0x52 &&
+        bytes[1] === 0x49 &&
+        bytes[2] === 0x46 &&
+        bytes[3] === 0x46 &&
+        bytes[8] === 0x57 &&
+        bytes[9] === 0x45 &&
+        bytes[10] === 0x42 &&
+        bytes[11] === 0x50;
+    default:
+      return false;
+  }
 }

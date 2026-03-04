@@ -71,7 +71,7 @@ describe("conversations tools", () => {
   describe("handleConversationsGet", () => {
     it("returns conversation by session ID", async () => {
       const userContent = [
-        { type: "image", source: { type: "url", url: "https://example.com/test.png" } },
+        { type: "image", source: { type: "url", url: "uploads/2026/03/04/s1/test.png" } },
       ] as const;
       await persistence.appendConversationTurn(
         "s1",
@@ -93,6 +93,44 @@ describe("conversations tools", () => {
       expect(parsed.turns[0].userContent).toEqual(userContent);
       expect(result.structuredContent).toEqual(parsed);
       expect(result.isError).toBe(false);
+    });
+
+    it("converts stored image paths to public URLs when called from HTTP transport", async () => {
+      const userContent = [
+        { type: "image", source: { type: "url", url: "uploads/2026/03/04/s1/test.png" } },
+      ] as const;
+      await persistence.appendConversationTurn(
+        "s1",
+        {
+          ...makeTurn(),
+          userMessage: "[image:url:uploads/2026/03/04/s1/test.png] check",
+          userContent: [...userContent],
+        },
+        "Test",
+      );
+
+      const result = await handleConversationsGet(
+        persistence,
+        {
+          sessionId: "s1",
+          _httpTransport: true,
+          _publicBaseUrl: "http://127.0.0.1:3290/api/mcp/codefleet.front-desk/public",
+        },
+        { publicAssetsBasePath: "/api/mcp/codefleet.front-desk/public" },
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.turns[0].userContent).toEqual([
+        {
+          type: "image",
+          source: {
+            type: "url",
+            url: "http://127.0.0.1:3290/api/mcp/codefleet.front-desk/public/uploads/2026/03/04/s1/test.png",
+          },
+        },
+      ]);
+      expect(parsed.turns[0].userMessage).toBe(
+        "[image:url:http://127.0.0.1:3290/api/mcp/codefleet.front-desk/public/uploads/2026/03/04/s1/test.png] check",
+      );
     });
 
     it("returns error for nonexistent conversation", async () => {

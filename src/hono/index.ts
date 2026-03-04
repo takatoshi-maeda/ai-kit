@@ -8,9 +8,19 @@ import type { ConversationalAgent } from "../agent/conversational.js";
 import type { McpServer as SdkMcpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import { promises as fs } from "node:fs";
+import path from "node:path";
 
 const encoder = new TextEncoder();
 const MCP_PROTOCOL_VERSION = "2025-06-18";
+const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
+const CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+};
 
 export type NotificationListener = (message: JSONRPCMessage) => void;
 
@@ -68,9 +78,11 @@ export async function mountMcpRoutes(
   options: MountMcpRoutesOptions,
 ): Promise<Map<string, AgentMount>> {
   const basePath = options.basePath ?? "/api/mcp";
+  const dataDir = options.dataDir ?? "data";
   const mounts = await initAgentMounts(
     options.agentDefinitions,
-    options.dataDir ?? "data",
+    dataDir,
+    basePath,
     options.onMountCreated,
   );
   const startedAt = Date.now();
@@ -93,6 +105,44 @@ export async function mountMcpRoutes(
     await next();
   });
 
+  app.get(`${basePath}/:agent_name/public/*`, async (c) => {
+    const agentName = c.req.param("agent_name") ?? "";
+    const routePrefix = `${basePath.replace(/\/+$/, "")}/${agentName}/public/`;
+    const requested = c.req.path.startsWith(routePrefix)
+      ? c.req.path.slice(routePrefix.length)
+      : "";
+    if (!agentName || requested.length === 0) {
+      return c.json({ error: "not found" }, 404);
+    }
+
+    const resolved = resolvePublicAssetFilePath(dataDir, agentName, requested);
+    if (!resolved.ok) {
+      return c.json({ error: resolved.error }, 400);
+    }
+
+    let file: Buffer;
+    try {
+      const stats = await fs.stat(resolved.fullPath);
+      if (!stats.isFile()) {
+        return c.json({ error: "not found" }, 404);
+      }
+      file = await fs.readFile(resolved.fullPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return c.json({ error: "not found" }, 404);
+      }
+      throw error;
+    }
+
+    return new Response(new Uint8Array(file), {
+      status: 200,
+      headers: {
+        "Content-Type": contentTypeFromPath(resolved.fullPath),
+        "Cache-Control": IMMUTABLE_CACHE_CONTROL,
+      },
+    });
+  });
+
   app.post(`${basePath}/:agent_name`, async (c) => {
     const mount = c.get("mount") as AgentMount;
     const { transport } = mount;
@@ -109,8 +159,11 @@ export async function mountMcpRoutes(
     }
 
     const message = payload as Record<string, unknown>;
+    const agentName = c.req.param("agent_name") ?? "";
+    const publicBaseUrl = resolvePublicBaseUrl(c.req.url, basePath, agentName);
+    const requestWithHttpMarker = withHttpTransportToolCallMarker(message, publicBaseUrl);
     if (isNotification(message)) {
-      transport.notify(message as unknown as JSONRPCMessage);
+      transport.notify(requestWithHttpMarker as unknown as JSONRPCMessage);
       return new Response(null, {
         status: 202,
         headers: { "MCP-Protocol-Version": MCP_PROTOCOL_VERSION },
@@ -118,14 +171,14 @@ export async function mountMcpRoutes(
     }
 
     if (!isRequest(message)) {
-      transport.notify(message as unknown as JSONRPCMessage);
+      transport.notify(requestWithHttpMarker as unknown as JSONRPCMessage);
       return new Response(null, {
         status: 202,
         headers: { "MCP-Protocol-Version": MCP_PROTOCOL_VERSION },
       });
     }
 
-    return sseResponseFromRequest(transport, message);
+    return sseResponseFromRequest(transport, requestWithHttpMarker);
   });
 
   app.get(`${basePath}/:agent_name/status`, async (c) => {
@@ -178,6 +231,16 @@ export async function mountMcpRoutes(
     const resolvedArguments = wantsStream && resolvedToolName === "agent.run"
       ? { stream: true, ...(toolArguments as Record<string, unknown> ?? {}) }
       : toolArguments ?? {};
+    const publicBaseUrl = resolvePublicBaseUrl(
+      c.req.url,
+      basePath,
+      c.req.param("agent_name") ?? "",
+    );
+    const argsWithHttpMarker = withHttpTransportArguments(
+      resolvedToolName,
+      resolvedArguments,
+      publicBaseUrl,
+    );
 
     const jsonRpcPayload = {
       jsonrpc: "2.0" as const,
@@ -185,7 +248,7 @@ export async function mountMcpRoutes(
       method: "tools/call" as const,
       params: {
         name: resolvedToolName,
-        arguments: resolvedArguments,
+        arguments: argsWithHttpMarker,
       },
     };
 
@@ -318,6 +381,7 @@ class InProcessMcpTransport implements Transport, McpInProcessTransport {
 async function initAgentMounts(
   definitions: AgentDefinition[],
   dataDir: string,
+  basePath: string,
   onMountCreated?: (mount: AgentMount) => Promise<void> | void,
 ): Promise<Map<string, AgentMount>> {
   const mounts = new Map<string, AgentMount>();
@@ -340,6 +404,8 @@ async function initAgentMounts(
       serverName: definition.name,
       persistence,
       agentRegistry: registry,
+      publicAssetsDir: `${dataDir}/${definition.name}/public`,
+      publicAssetsBasePath: `${basePath.replace(/\/+$/, "")}/${definition.name}/public`,
     });
 
     const transport = new InProcessMcpTransport();
@@ -493,6 +559,97 @@ function extractNotificationToken(message: Record<string, unknown>): string | nu
   if (!isRecord(args)) return null;
   const token = args.notification_token ?? args.notificationToken;
   return typeof token === "string" && token.length > 0 ? token : null;
+}
+
+function withHttpTransportToolCallMarker(
+  message: Record<string, unknown>,
+  publicBaseUrl?: string,
+): Record<string, unknown> {
+  if (message.method !== "tools/call") {
+    return message;
+  }
+  const params = isRecord(message.params) ? message.params : undefined;
+  if (!params) {
+    return message;
+  }
+  const toolName = typeof params.name === "string" ? params.name : "";
+  return {
+    ...message,
+    params: {
+      ...params,
+      arguments: withHttpTransportArguments(toolName, params.arguments, publicBaseUrl),
+    },
+  };
+}
+
+function withHttpTransportArguments(
+  toolName: string,
+  args: unknown,
+  publicBaseUrl?: string,
+): unknown {
+  if (toolName !== "conversations.get") {
+    return args;
+  }
+  if (!isRecord(args)) {
+    return { _httpTransport: true, _publicBaseUrl: publicBaseUrl };
+  }
+  return {
+    ...args,
+    _httpTransport: true,
+    _publicBaseUrl: publicBaseUrl ?? args._publicBaseUrl,
+  };
+}
+
+function resolvePublicBaseUrl(
+  requestUrl: string,
+  basePath: string,
+  agentName: string,
+): string | undefined {
+  if (!agentName) {
+    return undefined;
+  }
+  try {
+    const parsed = new URL(requestUrl);
+    return `${parsed.origin}${basePath.replace(/\/+$/, "")}/${agentName}/public`;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolvePublicAssetFilePath(
+  dataDir: string,
+  agentName: string,
+  requestedPath: string,
+): { ok: true; fullPath: string } | { ok: false; error: string } {
+  if (requestedPath.includes("\0")) {
+    return { ok: false, error: "invalid path" };
+  }
+  const normalized = path.posix.normalize(`/${requestedPath}`);
+  const segments = normalized.split("/").filter((segment) => segment.length > 0);
+  const resolvedSegments =
+    segments[0] === "public" ? segments.slice(1) : segments;
+  if (
+    resolvedSegments.length === 0 ||
+    resolvedSegments.some((segment) => segment === "." || segment === "..")
+  ) {
+    return { ok: false, error: "invalid path" };
+  }
+
+  // Always anchor under the mounted agent's public root to block traversal.
+  const publicRoot = path.resolve(dataDir, agentName, "public");
+  const fullPath = path.resolve(publicRoot, ...resolvedSegments);
+  if (
+    fullPath !== publicRoot &&
+    !fullPath.startsWith(`${publicRoot}${path.sep}`)
+  ) {
+    return { ok: false, error: "invalid path" };
+  }
+  return { ok: true, fullPath };
+}
+
+function contentTypeFromPath(fullPath: string): string {
+  const extension = path.extname(fullPath).toLowerCase();
+  return CONTENT_TYPE_BY_EXTENSION[extension] ?? "application/octet-stream";
 }
 
 function shouldForwardNotification(

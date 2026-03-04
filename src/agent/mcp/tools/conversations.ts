@@ -7,6 +7,14 @@ export const ConversationsListParamsSchema = z.object({
 
 export const ConversationsGetParamsSchema = z.object({
   sessionId: z.string().optional().describe("The session ID of the conversation to retrieve"),
+  _httpTransport: z
+    .boolean()
+    .optional()
+    .describe("Internal flag set by HTTP bridge routes to render public URLs"),
+  _publicBaseUrl: z
+    .string()
+    .optional()
+    .describe("Internal absolute base URL for HTTP transport responses"),
 });
 
 export const ConversationsDeleteParamsSchema = z.object({
@@ -45,6 +53,7 @@ export async function handleConversationsList(
 export async function handleConversationsGet(
   persistence: McpPersistence,
   params: z.infer<typeof ConversationsGetParamsSchema>,
+  options?: { publicAssetsBasePath?: string },
 ): Promise<{
   content: Array<{ type: "text"; text: string }>;
   structuredContent?: Record<string, unknown>;
@@ -65,7 +74,10 @@ export async function handleConversationsGet(
       isError: true,
     };
   }
-  const payload = formatConversationForWire(conversation);
+  const payload = formatConversationForWire(conversation, {
+    usePublicUrl: params._httpTransport === true,
+    publicAssetsBasePath: params._publicBaseUrl ?? options?.publicAssetsBasePath,
+  });
   return {
     content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
     structuredContent: payload,
@@ -97,13 +109,63 @@ function formatConversationForWire(
   conversation: Awaited<ReturnType<McpPersistence["readConversation"]>> extends infer T
     ? Exclude<T, null>
     : never,
+  options: {
+    usePublicUrl: boolean;
+    publicAssetsBasePath?: string;
+  },
 ): Record<string, unknown> {
+  const mapUserContent = (content: string | unknown[] | undefined): string | unknown[] | null => {
+    if (!Array.isArray(content)) {
+      return content ?? null;
+    }
+    if (!options.usePublicUrl) {
+      return content;
+    }
+    return content.map((part) => {
+      if (
+        typeof part !== "object" ||
+        part === null ||
+        !("type" in part) ||
+        (part as { type?: string }).type !== "image"
+      ) {
+        return part;
+      }
+      const imagePart = part as {
+        source?: { type?: string; url?: string };
+      };
+      const source = imagePart.source;
+      if (!source || source.type !== "url" || typeof source.url !== "string") {
+        return part;
+      }
+      const publicUrl = toPublicAssetUrl(source.url, options.publicAssetsBasePath);
+      if (!publicUrl) {
+        return part;
+      }
+      return {
+        ...imagePart,
+        source: {
+          ...source,
+          url: publicUrl,
+        },
+      };
+    });
+  };
+  const mapUserMessage = (message: string): string => {
+    if (!options.usePublicUrl) {
+      return message;
+    }
+    return message.replace(/\[image:url:([^\]]+)\]/g, (_full, rawUrl: string) => {
+      const converted = toPublicAssetUrl(rawUrl, options.publicAssetsBasePath);
+      return converted ? `[image:url:${converted}]` : `[image:url:${rawUrl}]`;
+    });
+  };
+
   const turns = conversation.turns.map((turn) => ({
     turnId: turn.turnId,
     runId: turn.runId,
     timestamp: turn.timestamp,
-    userMessage: turn.userMessage,
-    userContent: turn.userContent ?? null,
+    userMessage: mapUserMessage(turn.userMessage),
+    userContent: mapUserContent(turn.userContent),
     assistantMessage: turn.assistantMessage,
     status: turn.status,
     errorMessage: turn.errorMessage ?? null,
@@ -118,8 +180,10 @@ function formatConversationForWire(
         turnId: conversation.inProgress.turnId ?? null,
         startedAt: conversation.inProgress.startedAt,
         updatedAt: conversation.inProgress.updatedAt,
-        userMessage: conversation.inProgress.userMessage ?? null,
-        userContent: conversation.inProgress.userContent ?? null,
+        userMessage: conversation.inProgress.userMessage
+          ? mapUserMessage(conversation.inProgress.userMessage)
+          : null,
+        userContent: mapUserContent(conversation.inProgress.userContent),
         assistantMessage: conversation.inProgress.assistantMessage ?? null,
         timeline: conversation.inProgress.timeline ?? null,
         agentId: conversation.inProgress.agentId ?? null,
@@ -137,4 +201,15 @@ function formatConversationForWire(
     inProgress,
     turns,
   };
+}
+
+function toPublicAssetUrl(storedPath: string, publicAssetsBasePath?: string): string | null {
+  if (!/^uploads\/[^?#]+$/.test(storedPath)) {
+    return null;
+  }
+  const basePath = (publicAssetsBasePath ?? "").replace(/\/+$/, "");
+  if (!basePath) {
+    return null;
+  }
+  return `${basePath}/${storedPath}`;
 }
