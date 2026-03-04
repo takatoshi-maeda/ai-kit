@@ -70,6 +70,22 @@ describe("FileHistory", () => {
     ]);
   });
 
+  it("persists and restores content parts", async () => {
+    const content = [
+      {
+        type: "image",
+        source: { type: "url", url: "https://example.com/sample.png" },
+      },
+      { type: "text", text: "check this image" },
+    ] as const;
+
+    await history.addMessage({ role: "user", content: [...content] });
+
+    const messages = await history.getMessages();
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toEqual(content);
+  });
+
   it("filters by limit", async () => {
     await history.addMessage({ role: "user", content: "a" });
     await history.addMessage({ role: "user", content: "b" });
@@ -109,5 +125,22 @@ describe("FileHistory", () => {
 
     const msgs = await h.getMessages();
     expect(msgs).toHaveLength(1);
+  });
+
+  it("throws when persisted content is invalid", async () => {
+    const filePath = path.join(tmpDir, "test-session.jsonl");
+    await fs.writeFile(
+      filePath,
+      `${JSON.stringify({
+        role: "user",
+        content: [{ type: "image", source: { type: "base64", data: "abc" } }],
+        timestamp: new Date().toISOString(),
+      })}\n`,
+      "utf-8",
+    );
+
+    await expect(history.getMessages()).rejects.toThrow(
+      /Invalid conversation history entry/,
+    );
   });
 });

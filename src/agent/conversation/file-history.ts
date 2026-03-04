@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { LLMMessage } from "../../types/llm.js";
+import type { ContentPart, ImageSource } from "../../types/llm.js";
 import type {
   ConversationHistory,
   ConversationMessage,
@@ -8,7 +9,7 @@ import type {
 
 interface StoredMessage {
   role: ConversationMessage["role"];
-  content: string | unknown[];
+  content: string | ContentPart[];
   timestamp: string;
   metadata?: Record<string, unknown>;
 }
@@ -30,12 +31,26 @@ export class FileHistory implements ConversationHistory {
     }
 
     const messages: ConversationMessage[] = [];
-    for (const line of text.split("\n")) {
+    for (const [index, line] of text.split("\n").entries()) {
       if (!line.trim()) continue;
-      const stored: StoredMessage = JSON.parse(line);
+      let storedRaw: unknown;
+      try {
+        storedRaw = JSON.parse(line);
+      } catch (error) {
+        throw new Error(
+          `Failed to parse JSONL entry at ${this.filePath}:${index + 1}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
+      const stored = parseStoredMessage(
+        storedRaw,
+        this.filePath,
+        index + 1,
+      );
       messages.push({
         role: stored.role,
-        content: stored.content as ConversationMessage["content"],
+        content: stored.content,
         timestamp: new Date(stored.timestamp),
         metadata: stored.metadata,
       });
@@ -86,4 +101,90 @@ export class FileHistory implements ConversationHistory {
       throw err;
     }
   }
+}
+
+function parseStoredMessage(
+  value: unknown,
+  filePath: string,
+  lineNumber: number,
+): StoredMessage {
+  const asRecord = asObjectRecord(value);
+  const role = asRecord.role;
+  if (
+    role !== "user" &&
+    role !== "assistant" &&
+    role !== "system" &&
+    role !== "tool"
+  ) {
+    throw invalidLineError(filePath, lineNumber, "invalid role");
+  }
+
+  const content = asRecord.content;
+  if (typeof content !== "string" && !isContentPartArray(content)) {
+    throw invalidLineError(filePath, lineNumber, "invalid content");
+  }
+
+  const timestamp = asRecord.timestamp;
+  if (typeof timestamp !== "string" || Number.isNaN(Date.parse(timestamp))) {
+    throw invalidLineError(filePath, lineNumber, "invalid timestamp");
+  }
+
+  const metadata = asRecord.metadata;
+  if (metadata !== undefined && !isPlainObject(metadata)) {
+    throw invalidLineError(filePath, lineNumber, "invalid metadata");
+  }
+
+  return {
+    role,
+    content,
+    timestamp,
+    metadata: metadata as Record<string, unknown> | undefined,
+  };
+}
+
+function isContentPartArray(value: unknown): value is ContentPart[] {
+  return Array.isArray(value) && value.every((part) => isContentPart(part));
+}
+
+function isContentPart(value: unknown): value is ContentPart {
+  const asRecord = asObjectRecord(value);
+  if (asRecord.type === "text") {
+    return typeof asRecord.text === "string";
+  }
+  if (asRecord.type === "image") {
+    return isImageSource(asObjectRecord(asRecord.source));
+  }
+  if (asRecord.type === "audio") {
+    return typeof asRecord.data === "string" &&
+      typeof asRecord.format === "string";
+  }
+  return false;
+}
+
+function isImageSource(value: ImageSource | Record<string, unknown>): value is ImageSource {
+  if (value.type === "url") {
+    return typeof value.url === "string";
+  }
+  if (value.type === "base64") {
+    return typeof value.mediaType === "string" &&
+      typeof value.data === "string";
+  }
+  return false;
+}
+
+function asObjectRecord(value: unknown): Record<string, unknown> {
+  if (!isPlainObject(value)) {
+    return {};
+  }
+  return value;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function invalidLineError(filePath: string, lineNumber: number, reason: string): Error {
+  return new Error(
+    `Invalid conversation history entry at ${filePath}:${lineNumber} (${reason})`,
+  );
 }
