@@ -6,8 +6,11 @@ import path from "node:path";
 import { handleAgentList, handleAgentRun } from "../../../../src/agent/mcp/tools/agent.js";
 import type { AgentToolDeps } from "../../../../src/agent/mcp/tools/agent.js";
 import { AgentRegistry } from "../../../../src/agent/mcp/agent-registry.js";
+import { JsonlMcpPersistence } from "../../../../src/agent/mcp/jsonl-persistence.js";
+import { handleConversationsGet } from "../../../../src/agent/mcp/tools/conversations.js";
 import { ConversationalAgent } from "../../../../src/agent/conversational.js";
 import type { McpPersistence } from "../../../../src/agent/mcp/persistence.js";
+import { FileSystemStorage } from "../../../../src/storage/fs.js";
 import type { AgentContext, ConversationHistory } from "../../../../src/types/agent.js";
 import type { LLMClient } from "../../../../src/types/agent.js";
 import type { ContentPart, LLMResult, LLMUsage } from "../../../../src/types/llm.js";
@@ -589,6 +592,84 @@ describe("agent tools", () => {
         expect.any(String),
         expect.any(String),
       );
+    });
+
+    it("persists streaming timeline so conversations.get can return it", async () => {
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-timeline-"));
+      function streamingAgent(ctx: AgentContext): ConversationalAgent {
+        const client: LLMClient = {
+          model: "test-model",
+          provider: "openai",
+          capabilities: defaultCapabilities,
+          async invoke() {
+            throw new Error("invoke should not be called");
+          },
+          async *stream() {
+            yield { type: "reasoning.delta", delta: "Thinking" };
+            yield { type: "tool_call.arguments.delta", toolCallId: "tool-1", name: "read_file", delta: "{\"path\":\"" };
+            yield { type: "tool_call.arguments.done", toolCallId: "tool-1", name: "read_file", arguments: { path: "README.md" } };
+            yield { type: "text.delta", delta: "Done." };
+            yield { type: "response.completed", result: makeResult("Done.") };
+          },
+          estimateTokens: () => 10,
+        };
+        return new ConversationalAgent({
+          context: ctx,
+          client,
+          instructions: "Streaming agent",
+        });
+      }
+
+      try {
+        const registry = new AgentRegistry({
+          agents: [{ create: streamingAgent, agentId: "test" }],
+        });
+        const persistence = new JsonlMcpPersistence(new FileSystemStorage(tempDir));
+        const deps: AgentToolDeps = {
+          registry,
+          persistence,
+          sendNotification: vi.fn(async () => {}),
+        };
+
+        const runResult = await handleAgentRun(deps, {
+          message: "Hello",
+          agentId: "test",
+          sessionId: "sess-timeline",
+          stream: true,
+        });
+        const runPayload = JSON.parse(runResult.content[0].text);
+
+        const conversation = await handleConversationsGet(persistence, {
+          sessionId: "sess-timeline",
+        });
+        const payload = JSON.parse(conversation.content[0].text);
+
+        expect(runPayload.status).toBe("success");
+        expect(payload.turns).toHaveLength(1);
+        expect(payload.turns[0].timeline).toEqual([
+          {
+            kind: "reasoning",
+            id: "reasoning-1",
+            text: "Thinking",
+            status: "completed",
+          },
+          {
+            kind: "tool-call",
+            id: "tool-1",
+            summary: "read_file",
+            status: "completed",
+            argumentLines: ["{", "  \"path\": \"README.md\"", "}"],
+          },
+          expect.objectContaining({
+            kind: "text",
+            text: "Done.",
+            completedAt: expect.any(Number),
+            durationSeconds: expect.any(Number),
+          }),
+        ]);
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
     });
   });
 });

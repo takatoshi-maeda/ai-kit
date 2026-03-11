@@ -2,7 +2,7 @@ import { z } from "zod";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { AgentRegistry } from "../agent-registry.js";
-import type { McpPersistence, ConversationTurn } from "../persistence.js";
+import type { McpPersistence, ConversationTurn, TimelineItem } from "../persistence.js";
 import { AgentContextImpl } from "../../context.js";
 import { InMemoryHistory } from "../../conversation/memory-history.js";
 import type { LLMStreamEvent } from "../../../types/stream-events.js";
@@ -214,6 +214,9 @@ export async function handleAgentRun(
 
   // Record run state as started
   const startedAt = new Date().toISOString();
+  const runTimeline: TimelineItem[] = [];
+  const toolCallState = new Map<string, { index: number; argumentsText: string }>();
+  let partialAssistantMessage = "";
   await deps.persistence.appendRunState(sessionId, {
     runId,
     turnId,
@@ -257,7 +260,29 @@ export async function handleAgentRun(
       let agentResult: Awaited<typeof agentStream.result>;
       try {
         for await (const event of agentStream) {
+          const timelineChanged = applyStreamEventToTimeline(
+            event,
+            runTimeline,
+            toolCallState,
+            (delta) => {
+              partialAssistantMessage += delta;
+            },
+          );
           await forwardStreamEvent(event, deps.sendNotification);
+          if (timelineChanged) {
+            await deps.persistence.appendRunState(sessionId, {
+              runId,
+              turnId,
+              status: "started",
+              startedAt,
+              updatedAt: new Date().toISOString(),
+              userMessage: userMessagePreview,
+              userContent: userInput,
+              assistantMessage: partialAssistantMessage || undefined,
+              timeline: cloneTimeline(runTimeline),
+              agentId,
+            });
+          }
         }
         agentResult = await agentStream.result;
       } catch (streamError) {
@@ -332,6 +357,7 @@ export async function handleAgentRun(
       userContent: userInput,
       assistantMessage: result.message,
       status: "success",
+      timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
       agentId,
     };
     await deps.persistence.appendConversationTurn(sessionId, turn, title);
@@ -346,6 +372,7 @@ export async function handleAgentRun(
       userMessage: userMessagePreview,
       userContent: userInput,
       assistantMessage: result.message,
+      timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
       agentId,
     });
   } catch (err) {
@@ -373,6 +400,7 @@ export async function handleAgentRun(
       assistantMessage: "",
       status: "error",
       errorMessage,
+      timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
       agentId,
     };
     await deps.persistence.appendConversationTurn(sessionId, turn, title);
@@ -386,6 +414,7 @@ export async function handleAgentRun(
       updatedAt: new Date().toISOString(),
       userMessage: userMessagePreview,
       userContent: userInput,
+      timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
       agentId,
     });
 
@@ -456,6 +485,160 @@ async function forwardStreamEvent(
       }
       break;
   }
+}
+
+function applyStreamEventToTimeline(
+  event: LLMStreamEvent,
+  timeline: TimelineItem[],
+  toolCallState: Map<string, { index: number; argumentsText: string }>,
+  appendAssistantText: (delta: string) => void,
+): boolean {
+  const now = Date.now();
+
+  switch (event.type) {
+    case "reasoning.delta": {
+      const lastItem = timeline[timeline.length - 1];
+      if (lastItem?.kind === "reasoning" && lastItem.status === "running") {
+        lastItem.text += event.delta;
+      } else {
+        timeline.push({
+          kind: "reasoning",
+          id: `reasoning-${timeline.length + 1}`,
+          text: event.delta,
+          status: "running",
+        });
+      }
+      return true;
+    }
+    case "reasoning.done": {
+      const lastItem = timeline[timeline.length - 1];
+      if (lastItem?.kind === "reasoning") {
+        lastItem.text = event.text;
+        lastItem.status = "completed";
+      } else {
+        timeline.push({
+          kind: "reasoning",
+          id: `reasoning-${timeline.length + 1}`,
+          text: event.text,
+          status: "completed",
+        });
+      }
+      return true;
+    }
+    case "tool_call.arguments.delta": {
+      const existing = toolCallState.get(event.toolCallId);
+      if (existing) {
+        existing.argumentsText += event.delta;
+        const item = timeline[existing.index];
+        if (item?.kind === "tool-call") {
+          item.argumentLines = toArgumentLines(existing.argumentsText);
+        }
+      } else {
+        timeline.push({
+          kind: "tool-call",
+          id: event.toolCallId,
+          summary: event.name,
+          status: "running",
+          argumentLines: toArgumentLines(event.delta),
+        });
+        toolCallState.set(event.toolCallId, {
+          index: timeline.length - 1,
+          argumentsText: event.delta,
+        });
+      }
+      return true;
+    }
+    case "tool_call.arguments.done": {
+      const argumentText = JSON.stringify(event.arguments, null, 2);
+      const existing = toolCallState.get(event.toolCallId);
+      if (existing) {
+        existing.argumentsText = argumentText;
+        const item = timeline[existing.index];
+        if (item?.kind === "tool-call") {
+          item.summary = event.name;
+          item.status = "completed";
+          item.argumentLines = toArgumentLines(argumentText);
+        }
+      } else {
+        timeline.push({
+          kind: "tool-call",
+          id: event.toolCallId,
+          summary: event.name,
+          status: "completed",
+          argumentLines: toArgumentLines(argumentText),
+        });
+      }
+      return true;
+    }
+    case "text.delta": {
+      appendAssistantText(event.delta);
+      const lastItem = timeline[timeline.length - 1];
+      if (lastItem?.kind === "text") {
+        lastItem.text += event.delta;
+        lastItem.updatedAt = now;
+      } else {
+        timeline.push({
+          kind: "text",
+          id: `text-${timeline.length + 1}`,
+          text: event.delta,
+          startedAt: now,
+          updatedAt: now,
+        });
+      }
+      return true;
+    }
+    case "text.done": {
+      const lastItem = timeline[timeline.length - 1];
+      if (lastItem?.kind === "text") {
+        lastItem.text = event.text;
+        lastItem.updatedAt = now;
+        lastItem.completedAt = now;
+        lastItem.durationSeconds = Math.max(0, (now - lastItem.startedAt) / 1000);
+      } else {
+        timeline.push({
+          kind: "text",
+          id: `text-${timeline.length + 1}`,
+          text: event.text,
+          startedAt: now,
+          updatedAt: now,
+          completedAt: now,
+          durationSeconds: 0,
+        });
+      }
+      return true;
+    }
+    default:
+      return false;
+  }
+}
+
+function toArgumentLines(argumentText: string): string[] | undefined {
+  if (argumentText.length === 0) {
+    return undefined;
+  }
+  return argumentText.split("\n");
+}
+
+function cloneTimeline(timeline: TimelineItem[]): TimelineItem[] {
+  return timeline.map((item) => ({ ...item }));
+}
+
+function finalizeTimeline(timeline: TimelineItem[]): TimelineItem[] {
+  const now = Date.now();
+  return timeline.map((item) => {
+    if (item.kind === "reasoning" || item.kind === "tool-call") {
+      return item.status === "completed" ? { ...item } : { ...item, status: "completed" };
+    }
+    if (item.completedAt != null) {
+      return { ...item };
+    }
+    return {
+      ...item,
+      updatedAt: now,
+      completedAt: now,
+      durationSeconds: Math.max(0, (now - item.startedAt) / 1000),
+    };
+  });
 }
 
 function toAgentRunWireResult(
