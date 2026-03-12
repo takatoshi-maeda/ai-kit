@@ -3,10 +3,12 @@ import type { McpPersistence } from "../persistence.js";
 
 export const ConversationsListParamsSchema = z.object({
   limit: z.number().optional().describe("Maximum number of conversations to return"),
+  agentId: z.string().optional().describe("Agent ID to scope conversation queries"),
 });
 
 export const ConversationsGetParamsSchema = z.object({
   sessionId: z.string().optional().describe("The session ID of the conversation to retrieve"),
+  agentId: z.string().optional().describe("Agent ID to scope conversation queries"),
   _httpTransport: z
     .boolean()
     .optional()
@@ -19,6 +21,7 @@ export const ConversationsGetParamsSchema = z.object({
 
 export const ConversationsDeleteParamsSchema = z.object({
   sessionId: z.string().optional().describe("The session ID of the conversation to delete"),
+  agentId: z.string().optional().describe("Agent ID to scope conversation queries"),
 });
 
 export async function handleConversationsList(
@@ -29,12 +32,13 @@ export async function handleConversationsList(
   structuredContent: { sessions: Array<Record<string, unknown>> };
   isError: boolean;
 }> {
-  const summaries = await persistence.listConversationSummaries(params.limit);
+  const summaries = await persistence.listConversationSummaries(params.limit, params.agentId);
   const sessions = summaries.map((summary) => ({
     sessionId: summary.sessionId,
     title: summary.title ?? null,
     createdAt: summary.createdAt,
     updatedAt: summary.updatedAt,
+    agentId: summary.agentId ?? null,
     status: summary.status,
     activeRunId: summary.activeRunId ?? null,
     activeUpdatedAt: summary.activeUpdatedAt ?? null,
@@ -61,7 +65,7 @@ export async function handleConversationsGet(
 }> {
   const sessionId = params.sessionId;
   const conversation = sessionId
-    ? await persistence.readConversation(sessionId)
+    ? await persistence.readConversation(sessionId, params.agentId)
     : null;
   if (!conversation) {
     return {
@@ -94,7 +98,7 @@ export async function handleConversationsDelete(
   isError: boolean;
 }> {
   const sessionId = params.sessionId;
-  const deleted = sessionId ? await persistence.deleteConversation(sessionId) : false;
+  const deleted = sessionId ? await persistence.deleteConversation(sessionId, params.agentId) : false;
   const payload = { deleted };
   return {
     content: [
@@ -196,6 +200,7 @@ function formatConversationForWire(
     title: conversation.title ?? null,
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
+    agentId: conversation.agentId ?? null,
     agentName: conversation.agentName ?? null,
     status: conversation.status,
     inProgress,

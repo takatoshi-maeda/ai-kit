@@ -98,7 +98,10 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
     inputSchema: listShape,
   }, async (args) => {
     const parsed = ConversationsListParamsSchema.parse(args);
-    return handleConversationsList(persistence, parsed);
+    return handleConversationsList(persistence, {
+      ...parsed,
+      agentId: resolveConversationAgentId(agentRegistry, parsed.agentId),
+    });
   });
 
   const getShape = extractShape(ConversationsGetParamsSchema);
@@ -110,6 +113,7 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
     const isHttpTransport = parsed._httpTransport === true || extra.requestInfo !== undefined;
     return handleConversationsGet(persistence, {
       ...parsed,
+      agentId: resolveConversationAgentId(agentRegistry, parsed.agentId),
       _httpTransport: isHttpTransport,
     }, {
       publicAssetsBasePath,
@@ -122,7 +126,10 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
     inputSchema: deleteShape,
   }, async (args) => {
     const parsed = ConversationsDeleteParamsSchema.parse(args);
-    return handleConversationsDelete(persistence, parsed);
+    return handleConversationsDelete(persistence, {
+      ...parsed,
+      agentId: resolveConversationAgentId(agentRegistry, parsed.agentId),
+    });
   });
 
   // --- Usage tool ---
@@ -153,4 +160,14 @@ function extractShape<T extends z.ZodRawShape>(
   schema: z.ZodObject<T>,
 ): T {
   return schema.shape;
+}
+
+function resolveConversationAgentId(
+  agentRegistry: AgentRegistry | undefined,
+  agentId?: string,
+): string | undefined {
+  if (!agentRegistry) {
+    return agentId;
+  }
+  return agentRegistry.resolveAgentId(agentId);
 }

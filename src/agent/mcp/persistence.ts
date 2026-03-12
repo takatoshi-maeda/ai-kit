@@ -48,6 +48,7 @@ export interface Conversation {
   title?: string;
   createdAt: string;
   updatedAt: string;
+  agentId?: string;
   agentName?: string;
   status: "idle" | "progress";
   inProgress?: {
@@ -71,6 +72,7 @@ export interface ConversationSummary {
   title?: string;
   createdAt: string;
   updatedAt: string;
+  agentId?: string;
   status: "idle" | "progress";
   activeRunId?: string;
   activeUpdatedAt?: string;
@@ -117,9 +119,9 @@ export interface RunState {
  */
 export interface McpPersistence {
   /** 会話 */
-  readConversation(sessionId: string): Promise<Conversation | null>;
-  listConversationSummaries(limit?: number): Promise<ConversationSummary[]>;
-  deleteConversation(sessionId: string): Promise<boolean>;
+  readConversation(sessionId: string, agentId?: string): Promise<Conversation | null>;
+  listConversationSummaries(limit?: number, agentId?: string): Promise<ConversationSummary[]>;
+  deleteConversation(sessionId: string, agentId?: string): Promise<boolean>;
   appendConversationTurn(
     sessionId: string,
     turn: ConversationTurn,

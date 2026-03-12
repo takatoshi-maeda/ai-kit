@@ -35,13 +35,14 @@ describe("JsonlMcpPersistence", () => {
     });
 
     it("appends and reads a conversation turn", async () => {
-      const turn = makeTurn();
+      const turn = makeTurn({ agentId: "front-desk" });
       await persistence.appendConversationTurn("sess-1", turn, "Test Chat");
 
-      const conversation = await persistence.readConversation("sess-1");
+      const conversation = await persistence.readConversation("sess-1", "front-desk");
       expect(conversation).not.toBeNull();
       expect(conversation!.sessionId).toBe("sess-1");
       expect(conversation!.title).toBe("Test Chat");
+      expect(conversation!.agentId).toBe("front-desk");
       expect(conversation!.turns).toHaveLength(1);
       expect(conversation!.turns[0].userMessage).toBe("Hello");
       expect(conversation!.turns[0].assistantMessage).toBe("Hi there!");
@@ -49,10 +50,10 @@ describe("JsonlMcpPersistence", () => {
     });
 
     it("appends multiple turns", async () => {
-      await persistence.appendConversationTurn("sess-1", makeTurn({ turnId: "t1" }), "Chat");
-      await persistence.appendConversationTurn("sess-1", makeTurn({ turnId: "t2", userMessage: "Follow up" }));
+      await persistence.appendConversationTurn("sess-1", makeTurn({ turnId: "t1", agentId: "front-desk" }), "Chat");
+      await persistence.appendConversationTurn("sess-1", makeTurn({ turnId: "t2", userMessage: "Follow up", agentId: "front-desk" }));
 
-      const conversation = await persistence.readConversation("sess-1");
+      const conversation = await persistence.readConversation("sess-1", "front-desk");
       expect(conversation!.turns).toHaveLength(2);
       expect(conversation!.title).toBe("Chat");
     });
@@ -68,13 +69,15 @@ describe("JsonlMcpPersistence", () => {
         updatedAt: new Date().toISOString(),
         userMessage: "Working...",
         userContent: [...userContent],
+        agentId: "front-desk",
       });
 
-      const conversation = await persistence.readConversation("sess-1");
+      const conversation = await persistence.readConversation("sess-1", "front-desk");
       expect(conversation!.status).toBe("progress");
       expect(conversation!.inProgress).toBeDefined();
       expect(conversation!.inProgress!.runId).toBe("run-1");
       expect(conversation!.inProgress!.userContent).toEqual(userContent);
+      expect(conversation!.agentId).toBe("front-desk");
     });
 
     it("marks conversation idle after success run state", async () => {
@@ -83,15 +86,17 @@ describe("JsonlMcpPersistence", () => {
         status: "started",
         startedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        agentId: "front-desk",
       });
       await persistence.appendRunState("sess-1", {
         runId: "run-1",
         status: "success",
         startedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        agentId: "front-desk",
       });
 
-      const conversation = await persistence.readConversation("sess-1");
+      const conversation = await persistence.readConversation("sess-1", "front-desk");
       expect(conversation!.status).toBe("idle");
     });
 
@@ -101,10 +106,10 @@ describe("JsonlMcpPersistence", () => {
       ] as const;
       await persistence.appendConversationTurn(
         "sess-1",
-        makeTurn({ userContent: [...userContent], userMessage: "Hello from content parts" }),
+        makeTurn({ agentId: "front-desk", userContent: [...userContent], userMessage: "Hello from content parts" }),
         "Chat 1",
       );
-      await persistence.appendConversationTurn("sess-2", makeTurn({ userMessage: "Second" }), "Chat 2");
+      await persistence.appendConversationTurn("sess-2", makeTurn({ agentId: "requirements-interviewer", userMessage: "Second" }), "Chat 2");
 
       const summaries = await persistence.listConversationSummaries();
       expect(summaries).toHaveLength(2);
@@ -114,24 +119,39 @@ describe("JsonlMcpPersistence", () => {
       expect(ids).toContain("sess-2");
       const first = summaries.find((summary) => summary.sessionId === "sess-1");
       expect(first?.latestUserContent).toEqual(userContent);
+      expect(first?.agentId).toBe("front-desk");
+    });
+
+    it("filters summaries by agent ID", async () => {
+      await persistence.appendConversationTurn("front-1", makeTurn({ agentId: "front-desk" }), "Front");
+      await persistence.appendConversationTurn(
+        "req-1",
+        makeTurn({ agentId: "requirements-interviewer", userMessage: "Need details" }),
+        "Req",
+      );
+
+      const summaries = await persistence.listConversationSummaries(undefined, "requirements-interviewer");
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.sessionId).toBe("req-1");
+      expect(summaries[0]?.agentId).toBe("requirements-interviewer");
     });
 
     it("respects limit on summaries", async () => {
-      await persistence.appendConversationTurn("a", makeTurn(), "A");
-      await persistence.appendConversationTurn("b", makeTurn(), "B");
-      await persistence.appendConversationTurn("c", makeTurn(), "C");
+      await persistence.appendConversationTurn("a", makeTurn({ agentId: "front-desk" }), "A");
+      await persistence.appendConversationTurn("b", makeTurn({ agentId: "front-desk" }), "B");
+      await persistence.appendConversationTurn("c", makeTurn({ agentId: "front-desk" }), "C");
 
       const summaries = await persistence.listConversationSummaries(2);
       expect(summaries).toHaveLength(2);
     });
 
     it("deletes a conversation", async () => {
-      await persistence.appendConversationTurn("sess-1", makeTurn());
+      await persistence.appendConversationTurn("sess-1", makeTurn({ agentId: "front-desk" }));
 
-      const deleted = await persistence.deleteConversation("sess-1");
+      const deleted = await persistence.deleteConversation("sess-1", "front-desk");
       expect(deleted).toBe(true);
 
-      const result = await persistence.readConversation("sess-1");
+      const result = await persistence.readConversation("sess-1", "front-desk");
       expect(result).toBeNull();
     });
 

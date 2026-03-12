@@ -641,6 +641,7 @@ describe("agent tools", () => {
 
         const conversation = await handleConversationsGet(persistence, {
           sessionId: "sess-timeline",
+          agentId: "test",
         });
         const payload = JSON.parse(conversation.content[0].text);
 

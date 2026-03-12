@@ -24,7 +24,7 @@ interface UsageEntry {
 
 interface ConversationRecord {
   type: "turn" | "run_state" | "meta";
-  data: ConversationTurn | RunState | { title?: string; agentName?: string };
+  data: ConversationTurn | RunState | { title?: string; agentId?: string; agentName?: string };
   timestamp: string;
 }
 
@@ -35,17 +35,21 @@ interface ConversationRecord {
 export class JsonlMcpPersistence implements McpPersistence {
   constructor(private readonly storage: DataStorage) {}
 
-  private conversationPath(sessionId: string): string {
-    return `${CONVERSATIONS_DIR}/${sessionId}.jsonl`;
+  private conversationPath(sessionId: string, agentId?: string): string {
+    if (!agentId) {
+      return `${CONVERSATIONS_DIR}/${sessionId}.jsonl`;
+    }
+    return `${CONVERSATIONS_DIR}/${encodeURIComponent(agentId)}/${sessionId}.jsonl`;
   }
 
-  async readConversation(sessionId: string): Promise<Conversation | null> {
-    const raw = await this.storage.readText(this.conversationPath(sessionId));
+  async readConversation(sessionId: string, agentId?: string): Promise<Conversation | null> {
+    const raw = await this.storage.readText(this.conversationPath(sessionId, agentId));
     if (!raw) return null;
 
     const records = parseJsonl<ConversationRecord>(raw);
     const turns: ConversationTurn[] = [];
     let title: string | undefined;
+    let scopedAgentId: string | undefined = agentId;
     let agentName: string | undefined;
     let latestRunState: RunState | undefined;
 
@@ -55,8 +59,9 @@ export class JsonlMcpPersistence implements McpPersistence {
       } else if (record.type === "run_state") {
         latestRunState = record.data as RunState;
       } else if (record.type === "meta") {
-        const meta = record.data as { title?: string; agentName?: string };
+        const meta = record.data as { title?: string; agentId?: string; agentName?: string };
         if (meta.title) title = meta.title;
+        if (meta.agentId) scopedAgentId = meta.agentId;
         if (meta.agentName) agentName = meta.agentName;
       }
     }
@@ -77,6 +82,7 @@ export class JsonlMcpPersistence implements McpPersistence {
       title,
       createdAt: firstTimestamp,
       updatedAt: lastTimestamp,
+      agentId: scopedAgentId,
       agentName,
       status: isInProgress ? "progress" : "idle",
       turns,
@@ -102,16 +108,12 @@ export class JsonlMcpPersistence implements McpPersistence {
 
   async listConversationSummaries(
     limit?: number,
+    agentId?: string,
   ): Promise<ConversationSummary[]> {
-    const files = await this.storage.listFiles(CONVERSATIONS_DIR);
-    const jsonlFiles = files
-      .filter((f) => f.endsWith(".jsonl"))
-      .slice(0, limit);
-
+    const candidates = await this.listConversationCandidates(agentId);
     const summaries: ConversationSummary[] = [];
-    for (const file of jsonlFiles) {
-      const sessionId = file.replace(".jsonl", "");
-      const conversation = await this.readConversation(sessionId);
+    for (const candidate of candidates) {
+      const conversation = await this.readConversation(candidate.sessionId, candidate.agentId);
       if (!conversation) continue;
 
       const latestUserMessage =
@@ -128,6 +130,7 @@ export class JsonlMcpPersistence implements McpPersistence {
         title: conversation.title,
         createdAt: conversation.createdAt,
         updatedAt: conversation.updatedAt,
+        agentId: conversation.agentId,
         status: conversation.status,
         activeRunId: conversation.inProgress?.runId,
         activeUpdatedAt: conversation.inProgress?.updatedAt,
@@ -137,15 +140,16 @@ export class JsonlMcpPersistence implements McpPersistence {
       });
     }
 
-    return summaries;
+    summaries.sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    return typeof limit === "number" ? summaries.slice(0, limit) : summaries;
   }
 
-  async deleteConversation(sessionId: string): Promise<boolean> {
+  async deleteConversation(sessionId: string, agentId?: string): Promise<boolean> {
     const exists = await this.storage.stat(
-      this.conversationPath(sessionId),
+      this.conversationPath(sessionId, agentId),
     );
     if (!exists) return false;
-    await this.storage.deleteFile(this.conversationPath(sessionId));
+    await this.storage.deleteFile(this.conversationPath(sessionId, agentId));
     return true;
   }
 
@@ -155,15 +159,25 @@ export class JsonlMcpPersistence implements McpPersistence {
     title?: string,
   ): Promise<void> {
     const timestamp = new Date().toISOString();
+    const conversationAgentId = turn.agentId;
+    const existingConversation = await this.readConversation(sessionId, conversationAgentId);
 
-    if (title) {
+    if (existingConversation?.agentId && conversationAgentId && existingConversation.agentId !== conversationAgentId) {
+      throw new Error(`Conversation agent mismatch for session "${sessionId}"`);
+    }
+
+    if (title || conversationAgentId || turn.agentName) {
       const metaRecord: ConversationRecord = {
         type: "meta",
-        data: { title },
+        data: {
+          ...(title ? { title } : {}),
+          ...(conversationAgentId ? { agentId: conversationAgentId } : {}),
+          ...(turn.agentName ? { agentName: turn.agentName } : {}),
+        },
         timestamp,
       };
       await this.storage.appendText(
-        this.conversationPath(sessionId),
+        this.conversationPath(sessionId, conversationAgentId),
         JSON.stringify(metaRecord) + "\n",
       );
     }
@@ -174,19 +188,40 @@ export class JsonlMcpPersistence implements McpPersistence {
       timestamp,
     };
     await this.storage.appendText(
-      this.conversationPath(sessionId),
+      this.conversationPath(sessionId, conversationAgentId),
       JSON.stringify(record) + "\n",
     );
   }
 
   async appendRunState(sessionId: string, state: RunState): Promise<void> {
+    const conversationAgentId = state.agentId;
+    const existingConversation = await this.readConversation(sessionId, conversationAgentId);
+    if (existingConversation?.agentId && conversationAgentId && existingConversation.agentId !== conversationAgentId) {
+      throw new Error(`Conversation agent mismatch for session "${sessionId}"`);
+    }
+
+    if (!existingConversation && (conversationAgentId || state.agentName)) {
+      const metaRecord: ConversationRecord = {
+        type: "meta",
+        data: {
+          ...(conversationAgentId ? { agentId: conversationAgentId } : {}),
+          ...(state.agentName ? { agentName: state.agentName } : {}),
+        },
+        timestamp: new Date().toISOString(),
+      };
+      await this.storage.appendText(
+        this.conversationPath(sessionId, conversationAgentId),
+        JSON.stringify(metaRecord) + "\n",
+      );
+    }
+
     const record: ConversationRecord = {
       type: "run_state",
       data: state,
       timestamp: new Date().toISOString(),
     };
     await this.storage.appendText(
-      this.conversationPath(sessionId),
+      this.conversationPath(sessionId, conversationAgentId),
       JSON.stringify(record) + "\n",
     );
   }
@@ -290,6 +325,37 @@ export class JsonlMcpPersistence implements McpPersistence {
         error: err instanceof Error ? err.message : String(err),
       };
     }
+  }
+
+  private async listConversationCandidates(
+    agentId?: string,
+  ): Promise<Array<{ sessionId: string; agentId?: string }>> {
+    if (agentId) {
+      const files = await this.storage.listFiles(`${CONVERSATIONS_DIR}/${encodeURIComponent(agentId)}`);
+      return files
+        .filter((file) => file.endsWith(".jsonl"))
+        .map((file) => ({ sessionId: file.replace(/\.jsonl$/u, ""), agentId }));
+    }
+
+    const entries = await this.storage.listFiles(CONVERSATIONS_DIR);
+    const candidates: Array<{ sessionId: string; agentId?: string }> = [];
+    for (const entry of entries) {
+      if (entry.endsWith(".jsonl")) {
+        candidates.push({ sessionId: entry.replace(/\.jsonl$/u, "") });
+        continue;
+      }
+      const nestedFiles = await this.storage.listFiles(`${CONVERSATIONS_DIR}/${entry}`);
+      for (const file of nestedFiles) {
+        if (!file.endsWith(".jsonl")) {
+          continue;
+        }
+        candidates.push({
+          sessionId: file.replace(/\.jsonl$/u, ""),
+          agentId: decodeURIComponent(entry),
+        });
+      }
+    }
+    return candidates;
   }
 }
 

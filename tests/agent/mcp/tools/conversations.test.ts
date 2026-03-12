@@ -41,11 +41,12 @@ describe("conversations tools", () => {
     });
 
     it("returns conversations", async () => {
-      await persistence.appendConversationTurn("s1", makeTurn(), "Chat 1");
+      await persistence.appendConversationTurn("s1", { ...makeTurn(), agentId: "front-desk" }, "Chat 1");
       await persistence.appendConversationTurn(
         "s2",
         {
           ...makeTurn("Bye"),
+          agentId: "requirements-interviewer",
           userContent: [
             { type: "image", source: { type: "url", url: "https://example.com/bye.png" } },
             { type: "text", text: "Bye" },
@@ -58,6 +59,7 @@ describe("conversations tools", () => {
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.sessions).toHaveLength(2);
       expect(parsed.sessions[0]).toHaveProperty("sessionId");
+      expect(parsed.sessions[0]).toHaveProperty("agentId");
       expect(parsed.sessions[0]).toHaveProperty("createdAt");
       expect(parsed.sessions[0]).toHaveProperty("updatedAt");
       expect(parsed.sessions[0]).toHaveProperty("activeRunId");
@@ -75,15 +77,17 @@ describe("conversations tools", () => {
       ] as const;
       await persistence.appendConversationTurn(
         "s1",
-        { ...makeTurn(), userContent: [...userContent] },
+        { ...makeTurn(), agentId: "front-desk", userContent: [...userContent] },
         "Test",
       );
 
       const result = await handleConversationsGet(persistence, {
         sessionId: "s1",
+        agentId: "front-desk",
       });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.sessionId).toBe("s1");
+      expect(parsed.agentId).toBe("front-desk");
       expect(parsed.title).toBe("Test");
       expect(parsed.turns).toHaveLength(1);
       expect(parsed.turns[0]).toHaveProperty("turnId");
@@ -103,6 +107,7 @@ describe("conversations tools", () => {
         "s1",
         {
           ...makeTurn(),
+          agentId: "front-desk",
           userMessage: "[image:url:uploads/2026/03/04/s1/test.png] check",
           userContent: [...userContent],
         },
@@ -113,10 +118,11 @@ describe("conversations tools", () => {
         persistence,
         {
           sessionId: "s1",
+          agentId: "front-desk",
           _httpTransport: true,
-          _publicBaseUrl: "http://127.0.0.1:3290/api/mcp/codefleet.front-desk/public",
+          _publicBaseUrl: "http://127.0.0.1:3290/api/mcp/codefleet/public",
         },
-        { publicAssetsBasePath: "/api/mcp/codefleet.front-desk/public" },
+        { publicAssetsBasePath: "/api/mcp/codefleet/public" },
       );
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.turns[0].userContent).toEqual([
@@ -124,12 +130,12 @@ describe("conversations tools", () => {
           type: "image",
           source: {
             type: "url",
-            url: "http://127.0.0.1:3290/api/mcp/codefleet.front-desk/public/uploads/2026/03/04/s1/test.png",
+            url: "http://127.0.0.1:3290/api/mcp/codefleet/public/uploads/2026/03/04/s1/test.png",
           },
         },
       ]);
       expect(parsed.turns[0].userMessage).toBe(
-        "[image:url:http://127.0.0.1:3290/api/mcp/codefleet.front-desk/public/uploads/2026/03/04/s1/test.png] check",
+        "[image:url:http://127.0.0.1:3290/api/mcp/codefleet/public/uploads/2026/03/04/s1/test.png] check",
       );
     });
 
@@ -145,10 +151,11 @@ describe("conversations tools", () => {
 
   describe("handleConversationsDelete", () => {
     it("deletes existing conversation", async () => {
-      await persistence.appendConversationTurn("s1", makeTurn());
+      await persistence.appendConversationTurn("s1", { ...makeTurn(), agentId: "front-desk" });
 
       const result = await handleConversationsDelete(persistence, {
         sessionId: "s1",
+        agentId: "front-desk",
       });
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.deleted).toBe(true);
@@ -158,6 +165,7 @@ describe("conversations tools", () => {
       // Verify deleted
       const get = await handleConversationsGet(persistence, {
         sessionId: "s1",
+        agentId: "front-desk",
       });
       const getParsed = JSON.parse(get.content[0].text);
       expect(getParsed.error).toBe("Conversation not found");
