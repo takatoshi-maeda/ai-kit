@@ -20,10 +20,10 @@ describe("createTodoTools", () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "todo-test-"));
     storage = new FileSystemStorage(tmpDir);
     tools = createTodoTools({ storage, sessionId: "test-session" });
-    todoWrite = tools.find((t) => t.name === "TodoWrite")!;
-    todoRead = tools.find((t) => t.name === "TodoRead")!;
-    todoShowNext = tools.find((t) => t.name === "TodoShowNext")!;
-    todoListPending = tools.find((t) => t.name === "TodoListPending")!;
+    todoWrite = tools.find((t) => t.name === "todo_write")!;
+    todoRead = tools.find((t) => t.name === "todo_read")!;
+    todoShowNext = tools.find((t) => t.name === "todo_show_next")!;
+    todoListPending = tools.find((t) => t.name === "todo_list_pending")!;
   });
 
   afterEach(async () => {
@@ -33,14 +33,14 @@ describe("createTodoTools", () => {
   it("returns four tools", () => {
     expect(tools).toHaveLength(4);
     expect(tools.map((t) => t.name).sort()).toEqual([
-      "TodoListPending",
-      "TodoRead",
-      "TodoShowNext",
-      "TodoWrite",
+      "todo_list_pending",
+      "todo_read",
+      "todo_show_next",
+      "todo_write",
     ]);
   });
 
-  describe("TodoWrite (create)", () => {
+  describe("todo_write (create)", () => {
     it("creates a new item", async () => {
       const item = (await todoWrite.execute({ title: "Buy milk" })) as TodoItem;
       expect(item.id).toBe("1");
@@ -79,7 +79,7 @@ describe("createTodoTools", () => {
     });
   });
 
-  describe("TodoWrite (update)", () => {
+  describe("todo_write (update)", () => {
     it("updates title", async () => {
       await todoWrite.execute({ title: "Old title" });
       const updated = (await todoWrite.execute({
@@ -105,7 +105,7 @@ describe("createTodoTools", () => {
     });
   });
 
-  describe("TodoRead", () => {
+  describe("todo_read", () => {
     it("returns empty array initially", async () => {
       const items = await todoRead.execute({});
       expect(items).toEqual([]);
@@ -119,7 +119,7 @@ describe("createTodoTools", () => {
     });
   });
 
-  describe("TodoShowNext", () => {
+  describe("todo_show_next", () => {
     it("returns message when no pending items", async () => {
       const result = await todoShowNext.execute({});
       expect(result).toBe("No pending TODO items.");
@@ -154,7 +154,7 @@ describe("createTodoTools", () => {
     });
   });
 
-  describe("TodoListPending", () => {
+  describe("todo_list_pending", () => {
     it("returns empty array when no pending items", async () => {
       const items = await todoListPending.execute({});
       expect(items).toEqual([]);
@@ -181,7 +181,7 @@ describe("createTodoTools", () => {
 
       // Create new tool instances with same storage and session
       const newTools = createTodoTools({ storage, sessionId: "test-session" });
-      const newRead = newTools.find((t) => t.name === "TodoRead")!;
+      const newRead = newTools.find((t) => t.name === "todo_read")!;
       const items = (await newRead.execute({})) as TodoItem[];
       expect(items).toHaveLength(1);
       expect(items[0].title).toBe("Persisted");
@@ -194,7 +194,7 @@ describe("createTodoTools", () => {
         storage,
         sessionId: "other-session",
       });
-      const otherRead = otherTools.find((t) => t.name === "TodoRead")!;
+      const otherRead = otherTools.find((t) => t.name === "todo_read")!;
       const items = await otherRead.execute({});
       expect(items).toEqual([]);
     });

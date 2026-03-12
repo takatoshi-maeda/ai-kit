@@ -31,7 +31,7 @@ export function createFileTools(options: {
   const absWorkingDir = path.resolve(workingDir);
 
   const readFile: ToolDefinition = {
-    name: "ReadFile",
+    name: "read_file",
     description: "Read the contents of a file at the given path.",
     parameters: z.object({
       path: z.string().describe("The file path to read, relative to the working directory"),
@@ -50,7 +50,7 @@ export function createFileTools(options: {
   };
 
   const writeFile: ToolDefinition = {
-    name: "WriteFile",
+    name: "write_file",
     description: "Write content to a file at the given path. Creates parent directories if needed.",
     parameters: z.object({
       path: z.string().describe("The file path to write, relative to the working directory"),
@@ -65,7 +65,7 @@ export function createFileTools(options: {
   };
 
   const listDirectory: ToolDefinition = {
-    name: "ListDirectory",
+    name: "list_directory",
     description: "List files and directories at the given path.",
     parameters: z.object({
       path: z.string().describe("The directory path to list, relative to the working directory").default("."),
@@ -88,7 +88,7 @@ export function createFileTools(options: {
   };
 
   const makeDirectory: ToolDefinition = {
-    name: "MakeDirectory",
+    name: "make_directory",
     description: "Create a directory at the given path, including any necessary parent directories.",
     parameters: z.object({
       path: z.string().describe("The directory path to create, relative to the working directory"),

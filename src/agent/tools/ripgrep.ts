@@ -25,7 +25,7 @@ export function createRipgrepTool(options: {
   const { workingDir } = options;
 
   return {
-    name: "Ripgrep",
+    name: "ripgrep",
     description:
       "Search file contents using ripgrep (rg). Returns matching lines with file paths and line numbers.",
     parameters: z.object({

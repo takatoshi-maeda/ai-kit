@@ -24,6 +24,10 @@ describe("createTreeTool", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("uses a snake_case tool name", () => {
+    expect(tool.name).toBe("tree");
+  });
+
   it("renders a tree from the working directory", async () => {
     const result = await tool.execute({});
     expect(result).toContain(".");

@@ -80,7 +80,7 @@ export function createTreeTool(options: TreeToolOptions): ToolDefinition {
   const workingDir = path.resolve(options.workingDir);
 
   return {
-    name: "Tree",
+    name: "tree",
     description:
       "Render a directory tree under the working directory. Useful for understanding repository structure without reading file contents.",
     parameters: z.object({

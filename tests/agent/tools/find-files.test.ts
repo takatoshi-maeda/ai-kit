@@ -23,6 +23,10 @@ describe("createFindFilesTool", () => {
     await fs.rm(tmpDir, { recursive: true, force: true });
   });
 
+  it("uses a snake_case tool name", () => {
+    expect(tool.name).toBe("find_files");
+  });
+
   it("finds files by partial path match", async () => {
     const result = await tool.execute({ query: "maintenance" });
     expect(result).toContain("file: docs/maintenance/plan.md");

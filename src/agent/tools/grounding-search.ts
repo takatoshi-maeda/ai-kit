@@ -19,7 +19,7 @@ export function createGroundingSearchTool(options?: {
   const baseUrl = (options?.baseUrl ?? DEFAULT_BASE_URL).replace(/\/$/, "");
 
   return {
-    name: "GroundingSearch",
+    name: "grounding_search",
     description:
       "Use Perplexity (sonar) to collect current facts and sources for a query. Returns a research memo, not a final answer.",
     parameters: z.object({

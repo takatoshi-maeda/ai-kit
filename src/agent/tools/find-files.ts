@@ -57,7 +57,7 @@ export function createFindFilesTool(options: FindFilesOptions): ToolDefinition {
   const workingDir = path.resolve(options.workingDir);
 
   return {
-    name: "FindFiles",
+    name: "find_files",
     description:
       "Recursively search for file or directory paths under the working directory. Matches are based on path text, not file contents.",
     parameters: z.object({

@@ -158,7 +158,7 @@ export function createWebpageSummaryTool(options?: {
   }
 
   return {
-    name: "WebpageSummary",
+    name: "webpage_summary",
     description:
       "Fetch webpage content via ZyteAPI and summarize it in Japanese strictly based on the extracted content.",
     parameters: z.object({

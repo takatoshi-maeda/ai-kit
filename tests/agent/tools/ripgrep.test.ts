@@ -33,7 +33,7 @@ describe("createRipgrepTool", () => {
   });
 
   it("has correct name and description", () => {
-    expect(tool.name).toBe("Ripgrep");
+    expect(tool.name).toBe("ripgrep");
     expect(tool.description).toBeTruthy();
   });
 

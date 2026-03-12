@@ -39,7 +39,7 @@ export function createTodoTools(options: {
   const { storage, sessionId } = options;
 
   const todoWrite: ToolDefinition = {
-    name: "TodoWrite",
+    name: "todo_write",
     description: "Create or update a TODO item. To create, provide title. To update, provide id and fields to change.",
     parameters: z.object({
       id: z.string().optional().describe("ID of the item to update. Omit to create a new item."),
@@ -79,7 +79,7 @@ export function createTodoTools(options: {
   };
 
   const todoRead: ToolDefinition = {
-    name: "TodoRead",
+    name: "todo_read",
     description: "Read all TODO items.",
     parameters: z.object({}),
     async execute() {
@@ -89,7 +89,7 @@ export function createTodoTools(options: {
   };
 
   const todoShowNext: ToolDefinition = {
-    name: "TodoShowNext",
+    name: "todo_show_next",
     description: "Show the next TODO item to work on (highest priority pending item).",
     parameters: z.object({}),
     async execute() {
@@ -104,7 +104,7 @@ export function createTodoTools(options: {
   };
 
   const todoListPending: ToolDefinition = {
-    name: "TodoListPending",
+    name: "todo_list_pending",
     description: "List all pending and in-progress TODO items, sorted by priority.",
     parameters: z.object({}),
     async execute() {

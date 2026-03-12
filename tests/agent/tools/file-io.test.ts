@@ -16,10 +16,10 @@ describe("createFileTools", () => {
   beforeEach(async () => {
     tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "file-io-test-"));
     tools = createFileTools({ workingDir: tmpDir });
-    readFile = tools.find((t) => t.name === "ReadFile")!;
-    writeFile = tools.find((t) => t.name === "WriteFile")!;
-    listDirectory = tools.find((t) => t.name === "ListDirectory")!;
-    makeDirectory = tools.find((t) => t.name === "MakeDirectory")!;
+    readFile = tools.find((t) => t.name === "read_file")!;
+    writeFile = tools.find((t) => t.name === "write_file")!;
+    listDirectory = tools.find((t) => t.name === "list_directory")!;
+    makeDirectory = tools.find((t) => t.name === "make_directory")!;
   });
 
   afterEach(async () => {
@@ -29,14 +29,14 @@ describe("createFileTools", () => {
   it("returns four tools", () => {
     expect(tools).toHaveLength(4);
     expect(tools.map((t) => t.name).sort()).toEqual([
-      "ListDirectory",
-      "MakeDirectory",
-      "ReadFile",
-      "WriteFile",
+      "list_directory",
+      "make_directory",
+      "read_file",
+      "write_file",
     ]);
   });
 
-  describe("ReadFile", () => {
+  describe("read_file", () => {
     it("reads an existing file", async () => {
       await fs.writeFile(path.join(tmpDir, "hello.txt"), "world");
       const result = await readFile.execute({ path: "hello.txt" });
@@ -57,7 +57,7 @@ describe("createFileTools", () => {
     });
   });
 
-  describe("WriteFile", () => {
+  describe("write_file", () => {
     it("writes a new file", async () => {
       const result = await writeFile.execute({
         path: "new.txt",
@@ -88,7 +88,7 @@ describe("createFileTools", () => {
     });
   });
 
-  describe("ListDirectory", () => {
+  describe("list_directory", () => {
     it("lists files and directories", async () => {
       await fs.writeFile(path.join(tmpDir, "file.txt"), "data");
       await fs.mkdir(path.join(tmpDir, "subdir"));
@@ -108,7 +108,7 @@ describe("createFileTools", () => {
     });
   });
 
-  describe("MakeDirectory", () => {
+  describe("make_directory", () => {
     it("creates a directory", async () => {
       await makeDirectory.execute({ path: "newdir" });
       const stat = await fs.stat(path.join(tmpDir, "newdir"));
@@ -152,7 +152,7 @@ describe("createFileTools", () => {
         workingDir: tmpDir,
         allowedPaths: ["allowed"],
       });
-      const rf = restricted.find((t) => t.name === "ReadFile")!;
+      const rf = restricted.find((t) => t.name === "read_file")!;
       const result = await rf.execute({ path: "allowed/ok.txt" });
       expect(result).toBe("fine");
     });
@@ -164,7 +164,7 @@ describe("createFileTools", () => {
         workingDir: tmpDir,
         allowedPaths: ["allowed"],
       });
-      const rf = restricted.find((t) => t.name === "ReadFile")!;
+      const rf = restricted.find((t) => t.name === "read_file")!;
       await expect(rf.execute({ path: "secret.txt" })).rejects.toThrow(
         "outside allowed directories",
       );
