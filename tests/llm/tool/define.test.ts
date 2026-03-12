@@ -51,4 +51,22 @@ describe("toolToJsonSchema", () => {
     const result = toolToJsonSchema(tool);
     expect(result.parameters).not.toHaveProperty("$schema");
   });
+
+  it("uses numeric exclusiveMinimum for positive numbers", () => {
+    const tool = defineTool({
+      name: "positive",
+      description: "Positive integer",
+      parameters: z.object({
+        value: z.number().int().positive(),
+      }),
+      execute: async () => "ok",
+    });
+
+    const result = toolToJsonSchema(tool);
+    const props = result.parameters.properties as Record<string, unknown>;
+    expect(props.value).toMatchObject({
+      type: "integer",
+      exclusiveMinimum: 0,
+    });
+  });
 });

@@ -15,7 +15,9 @@ export function toolToJsonSchema(tool: ToolDefinition): {
 } {
   const jsonSchema = zodToJsonSchema(tool.parameters, {
     $refStrategy: "none",
-    target: "openApi3",
+    // OpenAI function tools expect standard JSON Schema numeric bounds such as
+    // `exclusiveMinimum: 0`, not the OpenAPI 3 boolean form plus `minimum`.
+    target: "jsonSchema7",
   });
 
   // Remove $schema and top-level additionalProperties if added by zod-to-json-schema

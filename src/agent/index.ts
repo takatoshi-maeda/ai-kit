@@ -27,8 +27,10 @@ export type { AgentMemoryOptions } from "./memory/index.js";
 // Tools
 export {
   createFileTools,
+  createFindFilesTool,
   createGroundingSearchTool,
   createRipgrepTool,
+  createTreeTool,
   createTodoTools,
   createWebpageSummaryTool,
 } from "./tools/index.js";
