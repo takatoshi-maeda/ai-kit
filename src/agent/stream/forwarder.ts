@@ -48,6 +48,13 @@ export class AgentStreamForwarder {
           summary: `Called ${event.name}`,
         };
 
+      case "tool_result":
+        return {
+          type: "agent.progress",
+          summary: event.isError ? `Tool failed: ${event.name}` : `Tool finished: ${event.name}`,
+          description: event.content,
+        };
+
       case "response.completed":
         return {
           type: "agent.result",

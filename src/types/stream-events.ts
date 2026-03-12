@@ -39,6 +39,14 @@ export interface ToolCallDoneEvent {
   arguments: Record<string, unknown>;
 }
 
+export interface ToolResultEvent {
+  type: "tool_result";
+  toolCallId: string;
+  name: string;
+  content: string;
+  isError: boolean;
+}
+
 export interface ReasoningDeltaEvent {
   type: "reasoning.delta";
   delta: string;
@@ -67,6 +75,7 @@ export type LLMStreamEvent =
   | TextDoneEvent
   | ToolCallDeltaEvent
   | ToolCallDoneEvent
+  | ToolResultEvent
   | ReasoningDeltaEvent
   | ReasoningDoneEvent
   | ErrorEvent

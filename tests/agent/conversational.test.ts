@@ -211,6 +211,59 @@ describe("ConversationalAgent", () => {
       expect(context.turns[1].turnType).toBe("finish");
     });
 
+    it("continues after a tool failure and passes the error result back to the model", async () => {
+      const failingTool = defineTool({
+        name: "read_file",
+        description: "Read a file",
+        parameters: z.object({ path: z.string() }),
+        execute: async () => {
+          throw new Error("File not found: README.md");
+        },
+      });
+
+      const capturedInputs: LLMChatInput[] = [];
+      const toolCallResult = makeResult({
+        toolCalls: [{ id: "tc-1", name: "read_file", arguments: { path: "README.md" } }],
+      });
+      const finalResult = makeResult({ content: "README.md は存在しませんでした。" });
+      const client: LLMClient = {
+        model: "test-model",
+        provider: "openai",
+        capabilities: defaultCapabilities,
+        async invoke() {
+          throw new Error("invoke should not be called");
+        },
+        async *stream(input: LLMChatInput) {
+          capturedInputs.push(input);
+          const result = capturedInputs.length === 1 ? toolCallResult : finalResult;
+          for (const event of makeStreamEvents(result)) {
+            yield event;
+          }
+        },
+        estimateTokens() {
+          return 10;
+        },
+      };
+      const context = new AgentContextImpl({ history: stubHistory() });
+
+      const agent = new ConversationalAgent({
+        context,
+        client,
+        instructions: "Use tools.",
+        tools: [failingTool],
+      });
+
+      const agentResult = await agent.invoke("Read the readme");
+
+      expect(agentResult.content).toBe("README.md は存在しませんでした。");
+      expect(agentResult.toolCalls).toHaveLength(1);
+      expect(agentResult.toolCalls[0].result).toMatchObject({
+        isError: true,
+        content: 'Tool "read_file" failed: File not found: README.md',
+      });
+      expect(capturedInputs[1]?.messages.some((message) => message.role === "tool" && String(message.content).includes("File not found: README.md"))).toBe(true);
+    });
+
     it("accumulates usage across turns", async () => {
       const tool = defineTool({
         name: "noop",

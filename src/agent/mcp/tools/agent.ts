@@ -78,13 +78,13 @@ export type McpStreamNotification =
   | { type: "agent.change_state.started"; sessionId: string; runId: string; agentId?: string; agentName?: string }
   | { type: "agent.reasoning_summary_delta"; delta: string }
   | {
-    type: "agent.tool_call";
-    summary: string;
-    description?: string;
-    toolCallId?: string;
-    arguments?: Record<string, unknown>;
-  }
-  | { type: "agent.tool_call_finish"; summary: string }
+      type: "agent.tool_call";
+      summary: string;
+      description?: string;
+      toolCallId?: string;
+      arguments?: Record<string, unknown>;
+    }
+  | { type: "agent.tool_call_finish"; summary: string; toolCallId?: string; status: "completed" | "failed"; errorMessage?: string }
   | { type: "agent.text_delta"; delta: string }
   | { type: "agent.text_result"; summary?: string; description?: string; responseId?: string }
   | { type: "agent.result"; responseId?: string; item?: Record<string, unknown> }
@@ -484,6 +484,15 @@ async function forwardStreamEvent(
         });
       }
       break;
+    case "tool_result":
+      await sendNotification("agent/stream-response", {
+        type: "agent.tool_call_finish",
+        summary: event.name,
+        toolCallId: event.toolCallId,
+        status: event.isError ? "failed" : "completed",
+        errorMessage: event.isError ? event.content : undefined,
+      });
+      break;
   }
 }
 
@@ -570,6 +579,26 @@ function applyStreamEventToTimeline(
       }
       return true;
     }
+    case "tool_result": {
+      const existing = toolCallState.get(event.toolCallId);
+      if (existing) {
+        const item = timeline[existing.index];
+        if (item?.kind === "tool-call") {
+          item.summary = event.name;
+          item.status = event.isError ? "failed" : "completed";
+          item.errorMessage = event.isError ? event.content : undefined;
+        }
+      } else {
+        timeline.push({
+          kind: "tool-call",
+          id: event.toolCallId,
+          summary: event.name,
+          status: event.isError ? "failed" : "completed",
+          errorMessage: event.isError ? event.content : undefined,
+        });
+      }
+      return true;
+    }
     case "text.delta": {
       appendAssistantText(event.delta);
       const lastItem = timeline[timeline.length - 1];
@@ -627,7 +656,10 @@ function finalizeTimeline(timeline: TimelineItem[]): TimelineItem[] {
   const now = Date.now();
   return timeline.map((item) => {
     if (item.kind === "reasoning" || item.kind === "tool-call") {
-      return item.status === "completed" ? { ...item } : { ...item, status: "completed" };
+      if (item.status === "completed" || item.status === "failed") {
+        return { ...item };
+      }
+      return { ...item, status: "completed" };
     }
     if (item.completedAt != null) {
       return { ...item };

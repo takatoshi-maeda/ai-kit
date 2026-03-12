@@ -14,8 +14,9 @@ export type TimelineItem =
       kind: "tool-call";
       id: string;
       summary: string;
-      status: "running" | "completed";
+      status: "running" | "completed" | "failed";
       argumentLines?: string[];
+      errorMessage?: string;
     }
   | {
       kind: "text";

@@ -253,11 +253,24 @@ export class ConversationalAgent {
 
       // 5. If tool calls, execute them and continue
       if (turnLLMResult.toolCalls.length > 0) {
-        await this.executeToolCalls(
+        const executedToolCalls = await this.executeToolCalls(
           turnLLMResult.toolCalls,
           context,
           hooks,
         );
+        for (const toolCall of executedToolCalls) {
+          const result = toolCall.result;
+          if (!result) {
+            continue;
+          }
+          yield {
+            type: "tool_result",
+            toolCallId: result.toolCallId,
+            name: toolCall.name,
+            content: result.content,
+            isError: !!result.isError,
+          };
+        }
 
         const toolMessages = toolCallsToMessages(
           turnLLMResult.toolCalls,
@@ -343,7 +356,7 @@ export class ConversationalAgent {
     toolCalls: LLMToolCall[],
     context: AgentContext,
     hooks: AgentOptions["hooks"],
-  ): Promise<void> {
+  ): Promise<LLMToolCall[]> {
     for (const toolCall of toolCalls) {
       await runBeforeToolCallHooks(hooks, {
         agentContext: context,
@@ -365,14 +378,29 @@ export class ConversationalAgent {
           },
         },
         async (observation) => {
-          const toolResult = await this.toolExecutor.execute(toolCall);
-          observation.update({
-            output: toolResult.content,
-            metadata: {
-              isError: !!toolResult.isError,
-            },
-          });
-          return toolResult;
+          try {
+            const toolResult = await this.toolExecutor.execute(toolCall);
+            observation.update({
+              output: toolResult.content,
+              metadata: {
+                isError: !!toolResult.isError,
+              },
+            });
+            return toolResult;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            observation.update({
+              output: message,
+              metadata: {
+                isError: true,
+              },
+            });
+            return {
+              toolCallId: toolCall.id,
+              content: message,
+              isError: true,
+            };
+          }
         },
       );
       toolCall.result = result;
@@ -384,6 +412,7 @@ export class ConversationalAgent {
         result,
       });
     }
+    return toolCalls;
   }
 
   private async executeEnforcedTools(
