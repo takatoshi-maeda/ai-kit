@@ -79,7 +79,7 @@ describe("AgentStreamForwarder", () => {
       {
         type: "output_item.added",
         itemId: "patch-1",
-        item: { type: "apply_patch_call", id: "patch-1" },
+        item: { type: "update_file", path: "docs/spec/a.md", diff: "" },
         contentType: "artifact",
       },
       {
@@ -90,7 +90,7 @@ describe("AgentStreamForwarder", () => {
       {
         type: "output_item.done",
         itemId: "patch-1",
-        item: { type: "apply_patch_call", id: "patch-1" },
+        item: { type: "update_file", path: "docs/spec/a.md", diff: "@@\n-old\n+new" },
         contentType: "artifact",
       },
     ];
@@ -101,7 +101,7 @@ describe("AgentStreamForwarder", () => {
       {
         type: "agent.output_item.added",
         itemId: "patch-1",
-        item: { type: "apply_patch_call", id: "patch-1" },
+        item: { type: "update_file", path: "docs/spec/a.md", diff: "" },
         contentType: "artifact",
       },
       {
@@ -112,7 +112,7 @@ describe("AgentStreamForwarder", () => {
       {
         type: "agent.output_item.done",
         itemId: "patch-1",
-        item: { type: "apply_patch_call", id: "patch-1" },
+        item: { type: "update_file", path: "docs/spec/a.md", diff: "@@\n-old\n+new" },
         contentType: "artifact",
       },
     ]);

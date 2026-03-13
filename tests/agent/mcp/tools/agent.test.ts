@@ -687,7 +687,7 @@ describe("agent tools", () => {
             yield {
               type: "output_item.added",
               itemId: "patch-1",
-              item: { type: "apply_patch_call", id: "patch-1" },
+              item: { type: "update_file", path: "docs/spec/a.md", diff: "" },
               contentType: "artifact",
             };
             yield {
@@ -698,7 +698,7 @@ describe("agent tools", () => {
             yield {
               type: "output_item.done",
               itemId: "patch-1",
-              item: { type: "apply_patch_call", id: "patch-1" },
+              item: { type: "update_file", path: "docs/spec/a.md", diff: "@@\n-old\n+new" },
               contentType: "artifact",
             };
             yield { type: "response.completed", result: makeResult("") };
@@ -738,7 +738,7 @@ describe("agent tools", () => {
           params: {
             type: "agent.output_item.added",
             itemId: "patch-1",
-            item: { type: "apply_patch_call", id: "patch-1" },
+            item: { type: "update_file", path: "docs/spec/a.md", diff: "" },
             content_type: "artifact",
           },
         });
@@ -755,7 +755,7 @@ describe("agent tools", () => {
           params: {
             type: "agent.output_item.done",
             itemId: "patch-1",
-            item: { type: "apply_patch_call", id: "patch-1" },
+            item: { type: "update_file", path: "docs/spec/a.md", diff: "@@\n-old\n+new" },
             content_type: "artifact",
           },
         });

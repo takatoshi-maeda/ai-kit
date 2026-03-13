@@ -108,7 +108,7 @@ export class OpenAIClient implements LLMClient {
             yield {
               type: "output_item.added",
               itemId,
-              item: toRecord(rawEvent.item),
+              item: this.normalizeApplyPatchArtifactItem(rawEvent.item),
               contentType: "artifact",
             };
           }
@@ -136,7 +136,7 @@ export class OpenAIClient implements LLMClient {
             yield {
               type: "output_item.done",
               itemId,
-              item: toRecord(rawEvent.item),
+              item: this.normalizeApplyPatchArtifactItem(rawEvent.item),
               contentType: "artifact",
             };
           }
@@ -664,6 +664,20 @@ export class OpenAIClient implements LLMClient {
     return {};
   }
 
+  private normalizeApplyPatchArtifactItem(value: unknown): Record<string, unknown> {
+    if (!value || typeof value !== "object") {
+      return {};
+    }
+    const item = value as {
+      operation?: unknown;
+      arguments?: unknown;
+      input?: unknown;
+    };
+    return this.parseApplyPatchOperation(
+      item.operation ?? item.arguments ?? item.input ?? value,
+    );
+  }
+
   private mapUsage(usage?: OpenAI.Responses.ResponseUsage): LLMUsage {
     if (!usage) {
       return emptyUsage();
@@ -844,10 +858,4 @@ function normalizeResponseOutputItemId(
     return outputItem.call_id;
   }
   return undefined;
-}
-
-function toRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object"
-    ? (value as Record<string, unknown>)
-    : {};
 }

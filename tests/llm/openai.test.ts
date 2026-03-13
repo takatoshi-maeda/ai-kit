@@ -633,6 +633,11 @@ describe("OpenAIClient", () => {
             type: "apply_patch_call",
             id: "patch-item-1",
             call_id: "patch-call-1",
+            operation: {
+              type: "update_file",
+              path: "docs/spec/a.md",
+              diff: "",
+            },
           },
         };
         yield {
@@ -691,10 +696,11 @@ describe("OpenAIClient", () => {
       expect(events).toContainEqual({
         type: "output_item.added",
         itemId: "patch-item-1",
-        item: expect.objectContaining({
-          type: "apply_patch_call",
-          id: "patch-item-1",
-        }),
+        item: {
+          type: "update_file",
+          path: "docs/spec/a.md",
+          diff: "",
+        },
         contentType: "artifact",
       });
       expect(events).toContainEqual({
@@ -705,10 +711,11 @@ describe("OpenAIClient", () => {
       expect(events).toContainEqual({
         type: "output_item.done",
         itemId: "patch-item-1",
-        item: expect.objectContaining({
-          type: "apply_patch_call",
-          id: "patch-item-1",
-        }),
+        item: {
+          type: "update_file",
+          path: "docs/spec/a.md",
+          diff: "@@\n-old\n+new",
+        },
         contentType: "artifact",
       });
     });
