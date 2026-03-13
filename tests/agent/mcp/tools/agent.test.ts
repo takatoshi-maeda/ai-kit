@@ -672,5 +672,111 @@ describe("agent tools", () => {
         await fs.rm(tempDir, { recursive: true, force: true });
       }
     });
+
+    it("forwards artifact stream notifications and persists artifact timeline items", async () => {
+      const notifications: Array<{ method: string; params: Record<string, unknown> }> = [];
+      function streamingArtifactAgent(ctx: AgentContext): ConversationalAgent {
+        const client: LLMClient = {
+          model: "test-model",
+          provider: "openai",
+          capabilities: defaultCapabilities,
+          async invoke() {
+            throw new Error("invoke should not be called");
+          },
+          async *stream() {
+            yield {
+              type: "output_item.added",
+              itemId: "patch-1",
+              item: { type: "apply_patch_call", id: "patch-1" },
+              contentType: "artifact",
+            };
+            yield {
+              type: "artifact.delta",
+              itemId: "patch-1",
+              delta: "*** Begin Patch\n*** End Patch",
+            };
+            yield {
+              type: "output_item.done",
+              itemId: "patch-1",
+              item: { type: "apply_patch_call", id: "patch-1" },
+              contentType: "artifact",
+            };
+            yield { type: "response.completed", result: makeResult("") };
+          },
+          estimateTokens: () => 10,
+        };
+        return new ConversationalAgent({
+          context: ctx,
+          client,
+          instructions: "Streaming artifact agent",
+        });
+      }
+
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-artifact-"));
+      try {
+        const registry = new AgentRegistry({
+          agents: [{ create: streamingArtifactAgent, agentId: "test" }],
+        });
+        const persistence = new JsonlMcpPersistence(new FileSystemStorage(tempDir));
+        const deps: AgentToolDeps = {
+          registry,
+          persistence,
+          sendNotification: vi.fn(async (method: string, params: Record<string, unknown>) => {
+            notifications.push({ method, params });
+          }),
+        };
+
+        await handleAgentRun(deps, {
+          message: "Hello",
+          agentId: "test",
+          sessionId: "sess-artifact",
+          stream: true,
+        });
+
+        expect(notifications).toContainEqual({
+          method: "agent/stream-response",
+          params: {
+            type: "agent.output_item.added",
+            itemId: "patch-1",
+            item: { type: "apply_patch_call", id: "patch-1" },
+            content_type: "artifact",
+          },
+        });
+        expect(notifications).toContainEqual({
+          method: "agent/stream-response",
+          params: {
+            type: "agent.artifact_delta",
+            itemId: "patch-1",
+            delta: "*** Begin Patch\n*** End Patch",
+          },
+        });
+        expect(notifications).toContainEqual({
+          method: "agent/stream-response",
+          params: {
+            type: "agent.output_item.done",
+            itemId: "patch-1",
+            item: { type: "apply_patch_call", id: "patch-1" },
+            content_type: "artifact",
+          },
+        });
+
+        const conversation = await handleConversationsGet(persistence, {
+          sessionId: "sess-artifact",
+          agentId: "test",
+        });
+        const payload = JSON.parse(conversation.content[0].text);
+        expect(payload.turns[0].timeline).toEqual([
+          {
+            kind: "artifact",
+            id: "patch-1",
+            text: "*** Begin Patch\n*** End Patch",
+            contentType: "artifact",
+            status: "completed",
+          },
+        ]);
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    });
   });
 });

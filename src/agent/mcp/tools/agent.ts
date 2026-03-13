@@ -78,6 +78,23 @@ export type McpStreamNotification =
   | { type: "agent.change_state.started"; sessionId: string; runId: string; agentId?: string; agentName?: string }
   | { type: "agent.reasoning_summary_delta"; delta: string }
   | {
+      type: "agent.output_item.added";
+      itemId: string;
+      item: Record<string, unknown>;
+      content_type: "artifact";
+    }
+  | {
+      type: "agent.artifact_delta";
+      itemId: string;
+      delta: string;
+    }
+  | {
+      type: "agent.output_item.done";
+      itemId: string;
+      item: Record<string, unknown>;
+      content_type: "artifact";
+    }
+  | {
       type: "agent.tool_call";
       summary: string;
       description?: string;
@@ -467,6 +484,29 @@ async function forwardStreamEvent(
         delta: event.delta,
       });
       break;
+    case "output_item.added":
+      await sendNotification("agent/stream-response", {
+        type: "agent.output_item.added",
+        itemId: event.itemId,
+        item: event.item,
+        content_type: "artifact",
+      });
+      break;
+    case "artifact.delta":
+      await sendNotification("agent/stream-response", {
+        type: "agent.artifact_delta",
+        itemId: event.itemId,
+        delta: event.delta,
+      });
+      break;
+    case "output_item.done":
+      await sendNotification("agent/stream-response", {
+        type: "agent.output_item.done",
+        itemId: event.itemId,
+        item: event.item,
+        content_type: "artifact",
+      });
+      break;
     case "tool_call.arguments.done":
       await sendNotification("agent/stream-response", {
         type: "agent.tool_call",
@@ -636,6 +676,50 @@ function applyStreamEventToTimeline(
       }
       return true;
     }
+    case "output_item.added": {
+      timeline.push({
+        kind: "artifact",
+        id: event.itemId,
+        text: "",
+        contentType: event.contentType,
+        status: "running",
+      });
+      return true;
+    }
+    case "artifact.delta": {
+      for (let index = timeline.length - 1; index >= 0; index -= 1) {
+        const item = timeline[index];
+        if (item?.kind === "artifact" && item.id === event.itemId) {
+          item.text += event.delta;
+          return true;
+        }
+      }
+      timeline.push({
+        kind: "artifact",
+        id: event.itemId,
+        text: event.delta,
+        contentType: "artifact",
+        status: "running",
+      });
+      return true;
+    }
+    case "output_item.done": {
+      for (let index = timeline.length - 1; index >= 0; index -= 1) {
+        const item = timeline[index];
+        if (item?.kind === "artifact" && item.id === event.itemId) {
+          item.status = "completed";
+          return true;
+        }
+      }
+      timeline.push({
+        kind: "artifact",
+        id: event.itemId,
+        text: "",
+        contentType: event.contentType,
+        status: "completed",
+      });
+      return true;
+    }
     default:
       return false;
   }
@@ -657,6 +741,12 @@ function finalizeTimeline(timeline: TimelineItem[]): TimelineItem[] {
   return timeline.map((item) => {
     if (item.kind === "reasoning" || item.kind === "tool-call") {
       if (item.status === "completed" || item.status === "failed") {
+        return { ...item };
+      }
+      return { ...item, status: "completed" };
+    }
+    if (item.kind === "artifact") {
+      if (item.status === "completed") {
         return { ...item };
       }
       return { ...item, status: "completed" };

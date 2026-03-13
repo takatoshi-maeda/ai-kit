@@ -623,6 +623,146 @@ describe("OpenAIClient", () => {
         ),
       ).toBe(false);
     });
+
+    it("maps apply_patch output item lifecycle events", async () => {
+      mockStream.mockReturnValue((async function* () {
+        yield {
+          type: "response.output_item.added",
+          item_id: "patch-item-1",
+          item: {
+            type: "apply_patch_call",
+            id: "patch-item-1",
+            call_id: "patch-call-1",
+          },
+        };
+        yield {
+          type: "response.apply_patch_call_operation_diff.delta",
+          item_id: "patch-item-1",
+          delta: "*** Begin Patch\n",
+        };
+        yield {
+          type: "response.output_item.done",
+          item_id: "patch-item-1",
+          item: {
+            type: "apply_patch_call",
+            id: "patch-item-1",
+            call_id: "patch-call-1",
+            operation: {
+              type: "update_file",
+              path: "docs/spec/a.md",
+              diff: "@@\n-old\n+new",
+            },
+          },
+        };
+        yield {
+          type: "response.completed",
+          response: {
+            id: "resp-stream-artifact",
+            output: [
+              {
+                type: "apply_patch_call",
+                id: "patch-item-1",
+                call_id: "patch-call-1",
+                operation: {
+                  type: "update_file",
+                  path: "docs/spec/a.md",
+                  diff: "@@\n-old\n+new",
+                },
+              },
+            ],
+            status: "completed",
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+              total_tokens: 15,
+              input_tokens_details: {},
+              output_tokens_details: {},
+            },
+          },
+        };
+      })());
+
+      const client = makeClient();
+      const events = [];
+      for await (const event of client.stream(makeBasicInput())) {
+        events.push(event);
+      }
+
+      expect(events).toContainEqual({
+        type: "output_item.added",
+        itemId: "patch-item-1",
+        item: expect.objectContaining({
+          type: "apply_patch_call",
+          id: "patch-item-1",
+        }),
+        contentType: "artifact",
+      });
+      expect(events).toContainEqual({
+        type: "artifact.delta",
+        itemId: "patch-item-1",
+        delta: "*** Begin Patch\n",
+      });
+      expect(events).toContainEqual({
+        type: "output_item.done",
+        itemId: "patch-item-1",
+        item: expect.objectContaining({
+          type: "apply_patch_call",
+          id: "patch-item-1",
+        }),
+        contentType: "artifact",
+      });
+    });
+
+    it("ignores non-apply-patch output items for artifact events", async () => {
+      mockStream.mockReturnValue((async function* () {
+        yield {
+          type: "response.output_item.added",
+          item_id: "fc-item-1",
+          item: {
+            type: "function_call",
+            id: "fc-item-1",
+            call_id: "fc-call-1",
+            name: "read_file",
+            arguments: "{}",
+          },
+        };
+        yield {
+          type: "response.output_item.done",
+          item_id: "fc-item-1",
+          item: {
+            type: "function_call",
+            id: "fc-item-1",
+            call_id: "fc-call-1",
+            name: "read_file",
+            arguments: "{}",
+          },
+        };
+        yield {
+          type: "response.completed",
+          response: {
+            id: "resp-stream-function-call",
+            output: [],
+            status: "completed",
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+              total_tokens: 15,
+              input_tokens_details: {},
+              output_tokens_details: {},
+            },
+          },
+        };
+      })());
+
+      const client = makeClient();
+      const events = [];
+      for await (const event of client.stream(makeBasicInput())) {
+        events.push(event);
+      }
+
+      expect(events.some((event) => event.type === "output_item.added")).toBe(false);
+      expect(events.some((event) => event.type === "output_item.done")).toBe(false);
+    });
   });
 
   describe("error mapping", () => {

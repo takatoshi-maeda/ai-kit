@@ -24,6 +24,7 @@ import {
   RateLimitError,
   ContextLengthExceededError,
 } from "../../errors.js";
+
 type ResponseInput = OpenAI.Responses.ResponseCreateParamsNonStreaming["input"];
 type ResponseInputItem = OpenAI.Responses.ResponseInputItem;
 const OPENAI_APPLY_PATCH_DEBUG_ENV = "CODEFLEET_DEBUG_OPENAI_APPLY_PATCH";
@@ -88,6 +89,60 @@ export class OpenAIClient implements LLMClient {
     try {
       for await (const event of stream) {
         debugOpenAIStreamEvent("received", event);
+        const rawEvent = event as {
+          type: string;
+          item_id?: unknown;
+          item?: unknown;
+          delta?: unknown;
+        };
+
+        // The OpenAI SDK type union can lag provider event rollout. Normalize
+        // raw apply_patch artifact events here while keeping the existing typed
+        // switch for stable event variants.
+        if (
+          rawEvent.type === "response.output_item.added" &&
+          isApplyPatchOutputItem(rawEvent.item)
+        ) {
+          const itemId = normalizeResponseOutputItemId(rawEvent.item, rawEvent.item_id);
+          if (itemId) {
+            yield {
+              type: "output_item.added",
+              itemId,
+              item: toRecord(rawEvent.item),
+              contentType: "artifact",
+            };
+          }
+          continue;
+        }
+
+        if (rawEvent.type === "response.apply_patch_call_operation_diff.delta") {
+          const itemId = normalizeResponseOutputItemId(undefined, rawEvent.item_id);
+          if (itemId && typeof rawEvent.delta === "string") {
+            yield {
+              type: "artifact.delta",
+              itemId,
+              delta: rawEvent.delta,
+            };
+          }
+          continue;
+        }
+
+        if (
+          rawEvent.type === "response.output_item.done" &&
+          isApplyPatchOutputItem(rawEvent.item)
+        ) {
+          const itemId = normalizeResponseOutputItemId(rawEvent.item, rawEvent.item_id);
+          if (itemId) {
+            yield {
+              type: "output_item.done",
+              itemId,
+              item: toRecord(rawEvent.item),
+              contentType: "artifact",
+            };
+          }
+          continue;
+        }
+
         switch (event.type) {
           case "response.created":
             responseId = event.response.id;
@@ -757,4 +812,42 @@ function emptyUsage(): LLMUsage {
     cacheCost: 0,
     totalCost: 0,
   };
+}
+
+function isApplyPatchOutputItem(item: unknown): item is OpenAI.Responses.ResponseOutputItem & {
+  type: "apply_patch_call";
+  id?: string;
+  call_id?: string;
+} {
+  return (
+    !!item &&
+    typeof item === "object" &&
+    (item as { type?: unknown }).type === "apply_patch_call"
+  );
+}
+
+function normalizeResponseOutputItemId(
+  item: unknown,
+  fallbackItemId?: unknown,
+): string | undefined {
+  if (typeof fallbackItemId === "string" && fallbackItemId.length > 0) {
+    return fallbackItemId;
+  }
+  if (!item || typeof item !== "object") {
+    return undefined;
+  }
+  const outputItem = item as { id?: unknown; call_id?: unknown };
+  if (typeof outputItem.id === "string" && outputItem.id.length > 0) {
+    return outputItem.id;
+  }
+  if (typeof outputItem.call_id === "string" && outputItem.call_id.length > 0) {
+    return outputItem.call_id;
+  }
+  return undefined;
+}
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object"
+    ? (value as Record<string, unknown>)
+    : {};
 }

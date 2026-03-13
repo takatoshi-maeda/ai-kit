@@ -47,6 +47,26 @@ export interface ToolResultEvent {
   isError: boolean;
 }
 
+export interface OutputItemAddedEvent {
+  type: "output_item.added";
+  itemId: string;
+  item: Record<string, unknown>;
+  contentType: "artifact";
+}
+
+export interface ArtifactDeltaEvent {
+  type: "artifact.delta";
+  itemId: string;
+  delta: string;
+}
+
+export interface OutputItemDoneEvent {
+  type: "output_item.done";
+  itemId: string;
+  item: Record<string, unknown>;
+  contentType: "artifact";
+}
+
 export interface ReasoningDeltaEvent {
   type: "reasoning.delta";
   delta: string;
@@ -76,6 +96,9 @@ export type LLMStreamEvent =
   | ToolCallDeltaEvent
   | ToolCallDoneEvent
   | ToolResultEvent
+  | OutputItemAddedEvent
+  | ArtifactDeltaEvent
+  | OutputItemDoneEvent
   | ReasoningDeltaEvent
   | ReasoningDoneEvent
   | ErrorEvent

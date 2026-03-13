@@ -26,6 +26,13 @@ export type TimelineItem =
       updatedAt: number;
       completedAt?: number;
       durationSeconds?: number;
+    }
+  | {
+      kind: "artifact";
+      id: string;
+      text: string;
+      contentType: "artifact";
+      status: "running" | "completed";
     };
 
 /** 会話ターン */

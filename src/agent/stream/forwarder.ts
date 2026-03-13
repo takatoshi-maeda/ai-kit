@@ -41,6 +41,29 @@ export class AgentStreamForwarder {
       case "reasoning.delta":
         return { type: "agent.reasoning_delta", delta: event.delta };
 
+      case "output_item.added":
+        return {
+          type: "agent.output_item.added",
+          itemId: event.itemId,
+          item: event.item,
+          contentType: event.contentType,
+        };
+
+      case "artifact.delta":
+        return {
+          type: "agent.artifact_delta",
+          itemId: event.itemId,
+          delta: event.delta,
+        };
+
+      case "output_item.done":
+        return {
+          type: "agent.output_item.done",
+          itemId: event.itemId,
+          item: event.item,
+          contentType: event.contentType,
+        };
+
       case "tool_call.arguments.done":
         return {
           type: "agent.tool_call",

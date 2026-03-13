@@ -3,6 +3,9 @@ export type AgentStreamResponse =
   | AgentTextDelta
   | AgentToolCall
   | AgentReasoningDelta
+  | AgentOutputItemAdded
+  | AgentArtifactDelta
+  | AgentOutputItemDone
   | AgentProgress
   | AgentResultEvent
   | AgentError
@@ -23,6 +26,26 @@ export interface AgentToolCall {
 export interface AgentReasoningDelta {
   type: "agent.reasoning_delta";
   delta: string;
+}
+
+export interface AgentOutputItemAdded {
+  type: "agent.output_item.added";
+  itemId: string;
+  item: Record<string, unknown>;
+  contentType: "artifact";
+}
+
+export interface AgentArtifactDelta {
+  type: "agent.artifact_delta";
+  itemId: string;
+  delta: string;
+}
+
+export interface AgentOutputItemDone {
+  type: "agent.output_item.done";
+  itemId: string;
+  item: Record<string, unknown>;
+  contentType: "artifact";
 }
 
 export interface AgentProgress {

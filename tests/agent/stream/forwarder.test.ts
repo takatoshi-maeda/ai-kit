@@ -73,6 +73,51 @@ describe("AgentStreamForwarder", () => {
     ]);
   });
 
+  it("converts artifact lifecycle events", async () => {
+    const forwarder = new AgentStreamForwarder();
+    const events: LLMStreamEvent[] = [
+      {
+        type: "output_item.added",
+        itemId: "patch-1",
+        item: { type: "apply_patch_call", id: "patch-1" },
+        contentType: "artifact",
+      },
+      {
+        type: "artifact.delta",
+        itemId: "patch-1",
+        delta: "*** Begin Patch\n",
+      },
+      {
+        type: "output_item.done",
+        itemId: "patch-1",
+        item: { type: "apply_patch_call", id: "patch-1" },
+        contentType: "artifact",
+      },
+    ];
+
+    const results = await collect(forwarder.forward(toStream(events)));
+
+    expect(results).toEqual([
+      {
+        type: "agent.output_item.added",
+        itemId: "patch-1",
+        item: { type: "apply_patch_call", id: "patch-1" },
+        contentType: "artifact",
+      },
+      {
+        type: "agent.artifact_delta",
+        itemId: "patch-1",
+        delta: "*** Begin Patch\n",
+      },
+      {
+        type: "agent.output_item.done",
+        itemId: "patch-1",
+        item: { type: "apply_patch_call", id: "patch-1" },
+        contentType: "artifact",
+      },
+    ]);
+  });
+
   it("converts tool_call.arguments.done to agent.tool_call", async () => {
     const forwarder = new AgentStreamForwarder();
     const events: LLMStreamEvent[] = [
