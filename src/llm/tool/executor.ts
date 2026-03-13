@@ -1,11 +1,19 @@
 import { ToolExecutionError } from "../../errors.js";
-import type { ToolDefinition, LLMToolCall, LLMToolResult } from "../../types/tool.js";
+import {
+  isFunctionToolDefinition,
+  type AgentTool,
+  type ToolDefinition,
+  type LLMToolCall,
+  type LLMToolResult,
+} from "../../types/tool.js";
 
 export class ToolExecutor {
   private readonly toolMap: Map<string, ToolDefinition>;
 
-  constructor(tools: ToolDefinition[]) {
-    this.toolMap = new Map(tools.map((t) => [t.name, t]));
+  constructor(tools: AgentTool[]) {
+    this.toolMap = new Map(
+      tools.filter(isFunctionToolDefinition).map((t) => [t.name, t]),
+    );
   }
 
   findTool(name: string): ToolDefinition | undefined {
@@ -28,6 +36,12 @@ export class ToolExecutor {
       return {
         toolCallId: toolCall.id,
         content: typeof result === "string" ? result : JSON.stringify(result),
+        extra: {
+          providerRaw: buildFunctionToolResultProviderRaw(
+            toolCall,
+            typeof result === "string" ? result : JSON.stringify(result),
+          ),
+        },
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -53,4 +67,24 @@ export class ToolExecutor {
       };
     });
   }
+}
+
+function buildFunctionToolResultProviderRaw(
+  toolCall: LLMToolCall,
+  output: string,
+) {
+  if (toolCall.executionKind === "provider_native" || toolCall.provider !== "openai") {
+    return undefined;
+  }
+
+  return {
+    provider: "openai" as const,
+    inputItems: [
+      {
+        type: "function_call_output",
+        call_id: toolCall.id,
+        output,
+      },
+    ],
+  };
 }

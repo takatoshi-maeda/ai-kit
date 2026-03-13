@@ -22,9 +22,15 @@ export type {
   ErrorEvent,
   UsageEvent,
   // Tool
+  AgentTool,
   ToolDefinition,
   LLMToolCall,
   LLMToolResult,
+  ToolExecutionKind,
+  ProviderNativeTool,
+  OpenAINativeShellTool,
+  OpenAINativeApplyPatchTool,
+  ProviderRawTransport,
   // Agent
   AgentContext,
   AgentResult,
@@ -43,6 +49,7 @@ export type {
   AfterToolCallContext,
   AfterRunContext,
   ToolPipeline,
+  NativeToolRuntime,
   ConversationHistory,
   ConversationMessage,
   LLMClient,
@@ -115,6 +122,7 @@ export { StructuredAgent } from "./agent/index.js";
 export { AgentRouter } from "./agent/index.js";
 export type { AgentRouterOptions } from "./agent/index.js";
 export { AgentProxy } from "./agent/index.js";
+export { OpenAINativeToolRuntime } from "./agent/index.js";
 
 // Conversation
 export { InMemoryHistory } from "./agent/index.js";

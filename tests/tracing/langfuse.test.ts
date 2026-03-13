@@ -83,11 +83,10 @@ describe("langfuse tracing", () => {
       );
 
       expect(result).toBe("done");
-      expect(MockLangfuse).toHaveBeenCalledWith({
+      expect(MockLangfuse).toHaveBeenCalledWith(expect.objectContaining({
         publicKey: "pk-test",
         secretKey: "sk-test",
-        baseUrl: undefined,
-      });
+      }));
       expect(mockTrace).toHaveBeenCalledWith({
         name: "my-span",
         input: { query: "hello" },

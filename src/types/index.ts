@@ -24,9 +24,15 @@ export type {
 } from "./stream-events.js";
 
 export type {
+  AgentTool,
   ToolDefinition,
   LLMToolCall,
   LLMToolResult,
+  ToolExecutionKind,
+  ProviderNativeTool,
+  OpenAINativeShellTool,
+  OpenAINativeApplyPatchTool,
+  ProviderRawTransport,
 } from "./tool.js";
 
 export type {
@@ -47,6 +53,7 @@ export type {
   AfterToolCallContext,
   AfterRunContext,
   ToolPipeline,
+  NativeToolRuntime,
   ConversationHistory,
   ConversationMessage,
   LLMClient,

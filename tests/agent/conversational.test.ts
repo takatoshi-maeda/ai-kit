@@ -185,7 +185,7 @@ describe("ConversationalAgent", () => {
       const toolCallResult = makeResult({
         content: null,
         toolCalls: [
-          { id: "tc-1", name: "echo", arguments: { text: "hello" } },
+          { id: "tc-1", name: "echo", arguments: { text: "hello" }, provider: "openai" },
         ],
       });
       const finalResult = makeResult({ content: "Got echo result" });
@@ -209,6 +209,131 @@ describe("ConversationalAgent", () => {
       expect(context.turns).toHaveLength(2);
       expect(context.turns[0].turnType).toBe("next_action");
       expect(context.turns[1].turnType).toBe("finish");
+      expect(agentResult.toolCalls[0].result?.extra).toMatchObject({
+        providerRaw: {
+          provider: "openai",
+          inputItems: [
+            {
+              type: "function_call_output",
+              call_id: "tc-1",
+              output: "echoed: hello",
+            },
+          ],
+        },
+      });
+    });
+
+    it("routes provider-native tool calls through the native runtime", async () => {
+      const capturedInputs: LLMChatInput[] = [];
+      const nativeToolCall = makeResult({
+        toolCalls: [
+          {
+            id: "shell-call-1",
+            name: "shell",
+            arguments: { commands: ["pwd"] },
+            executionKind: "provider_native",
+            provider: "openai",
+            extra: {
+              providerRaw: {
+                provider: "openai",
+                outputItems: [{ type: "shell_call", call_id: "shell-call-1", action: { commands: ["pwd"] } }],
+              },
+            },
+          },
+        ],
+      });
+      const finalResult = makeResult({ content: "shell complete" });
+      const client: LLMClient = {
+        model: "test-model",
+        provider: "openai",
+        capabilities: defaultCapabilities,
+        async invoke() {
+          throw new Error("invoke should not be called");
+        },
+        async *stream(input: LLMChatInput) {
+          capturedInputs.push(input);
+          const result = capturedInputs.length === 1 ? nativeToolCall : finalResult;
+          for (const event of makeStreamEvents(result)) {
+            yield event;
+          }
+        },
+        estimateTokens() {
+          return 10;
+        },
+      };
+      const nativeToolRuntime = {
+        supports: () => true,
+        async execute() {
+          return {
+            toolCallId: "shell-call-1",
+            content: "[]",
+            extra: {
+              providerRaw: {
+                provider: "openai",
+                inputItems: [{ type: "shell_call_output", call_id: "shell-call-1", output: [] }],
+              },
+            },
+          };
+        },
+      };
+      const context = new AgentContextImpl({ history: stubHistory() });
+      const agent = new ConversationalAgent({
+        context,
+        client,
+        instructions: "Use native tools.",
+        tools: [
+          {
+            kind: "provider_native",
+            provider: "openai",
+            type: "shell",
+            workingDir: "/workspace",
+            timeoutMs: 10_000,
+          },
+        ],
+        nativeToolRuntime,
+      });
+
+      const agentResult = await agent.invoke("Inspect repo");
+
+      expect(agentResult.content).toBe("shell complete");
+      expect(capturedInputs[1]?.messages).toContainEqual(
+        expect.objectContaining({
+          role: "tool",
+          toolCallId: "shell-call-1",
+          extra: {
+            providerRaw: {
+              provider: "openai",
+              inputItems: [{ type: "shell_call", call_id: "shell-call-1", action: { commands: ["pwd"] } }, { type: "shell_call_output", call_id: "shell-call-1", output: [] }],
+              outputItems: [{ type: "shell_call", call_id: "shell-call-1", action: { commands: ["pwd"] } }],
+            },
+            tool: {
+              call: {
+                id: "shell-call-1",
+                name: "shell",
+                executionKind: "provider_native",
+                provider: "openai",
+                arguments: { commands: ["pwd"] },
+                extra: {
+                  providerRaw: {
+                    provider: "openai",
+                    outputItems: [{ type: "shell_call", call_id: "shell-call-1", action: { commands: ["pwd"] } }],
+                  },
+                },
+              },
+              result: {
+                content: "[]",
+                isError: undefined,
+                extra: {
+                  providerRaw: {
+                    provider: "openai",
+                    inputItems: [{ type: "shell_call_output", call_id: "shell-call-1", output: [] }],
+                  },
+                },
+              },
+            },
+          },
+        }),
+      );
     });
 
     it("continues after a tool failure and passes the error result back to the model", async () => {
@@ -223,8 +348,21 @@ describe("ConversationalAgent", () => {
 
       const capturedInputs: LLMChatInput[] = [];
       const toolCallResult = makeResult({
-        toolCalls: [{ id: "tc-1", name: "read_file", arguments: { path: "README.md" } }],
+        toolCalls: [{ id: "tc-1", name: "read_file", arguments: { path: "README.md" }, provider: "openai" }],
       });
+      toolCallResult.toolCalls[0]!.extra = {
+        providerRaw: {
+          provider: "openai",
+          outputItems: [
+            {
+              type: "function_call",
+              call_id: "tc-1",
+              name: "read_file",
+              arguments: "{\"path\":\"README.md\"}",
+            },
+          ],
+        },
+      };
       const finalResult = makeResult({ content: "README.md は存在しませんでした。" });
       const client: LLMClient = {
         model: "test-model",
@@ -262,6 +400,22 @@ describe("ConversationalAgent", () => {
         content: 'Tool "read_file" failed: File not found: README.md',
       });
       expect(capturedInputs[1]?.messages.some((message) => message.role === "tool" && String(message.content).includes("File not found: README.md"))).toBe(true);
+      const toolMessage = capturedInputs[1]?.messages.find((message) => message.role === "tool");
+      expect(toolMessage?.extra).toMatchObject({
+        providerRaw: {
+          provider: "openai",
+          inputItems: [
+            {
+              type: "function_call",
+              call_id: "tc-1",
+            },
+            {
+              type: "function_call_output",
+              call_id: "tc-1",
+            },
+          ],
+        },
+      });
     });
 
     it("accumulates usage across turns", async () => {

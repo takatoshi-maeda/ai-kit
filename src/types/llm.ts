@@ -1,6 +1,5 @@
 import type { ZodType } from "zod";
-import type { LLMToolCall } from "./tool.js";
-import type { ToolDefinition } from "./tool.js";
+import type { AgentTool, LLMToolCall, ProviderRawTransport, ToolExecutionKind } from "./tool.js";
 
 export type ImageSource =
   | { type: "base64"; mediaType: string; data: string }
@@ -16,6 +15,25 @@ export interface LLMMessage {
   content: string | ContentPart[];
   name?: string;
   toolCallId?: string;
+  extra?: {
+    tool?: {
+      call: {
+        id: string;
+        name: string;
+        executionKind: ToolExecutionKind;
+        provider?: "openai";
+        arguments: Record<string, unknown>;
+        extra?: Record<string, unknown>;
+      };
+      result?: {
+        content: string;
+        isError?: boolean;
+        extra?: Record<string, unknown>;
+      };
+    };
+    providerRaw?: ProviderRawTransport;
+    [key: string]: unknown;
+  };
 }
 
 export type ResponseFormat =
@@ -25,7 +43,7 @@ export type ResponseFormat =
 export interface LLMChatInput {
   messages: LLMMessage[];
   instructions?: string;
-  tools?: ToolDefinition[];
+  tools?: AgentTool[];
   toolChoice?: "none" | "auto" | "required";
   parallelToolCalls?: boolean;
   responseFormat?: ResponseFormat;

@@ -13,7 +13,12 @@ import type {
   LLMUsage,
 } from "../types/llm.js";
 import type { LLMStreamEvent } from "../types/stream-events.js";
-import type { LLMToolCall, ToolDefinition } from "../types/tool.js";
+import {
+  isProviderNativeTool,
+  type LLMToolCall,
+  type ProviderNativeTool,
+  type ToolDefinition,
+} from "../types/tool.js";
 import { ToolExecutor } from "../llm/tool/executor.js";
 import { toolCallsToMessages } from "../llm/tool/message-converter.js";
 import {
@@ -38,10 +43,12 @@ const DEFAULT_MAX_TURNS = 10;
 export class ConversationalAgent {
   protected readonly options: AgentOptions;
   private readonly toolExecutor: ToolExecutor;
+  private readonly nativeTools: ProviderNativeTool[];
 
   constructor(options: AgentOptions) {
     this.options = options;
     this.toolExecutor = new ToolExecutor(options.tools ?? []);
+    this.nativeTools = (options.tools ?? []).filter(isProviderNativeTool);
   }
 
   stream(
@@ -311,6 +318,15 @@ export class ConversationalAgent {
 
       // Save to conversation history
       await context.history.addMessage({ role: "user", content: input });
+      for (const message of currentMessages.slice(1)) {
+        await context.history.addMessage({
+          role: message.role,
+          content: message.content,
+          name: message.name,
+          toolCallId: message.toolCallId,
+          extra: message.extra,
+        });
+      }
       if (turnLLMResult.content) {
         await context.history.addMessage({
           role: "assistant",
@@ -379,7 +395,7 @@ export class ConversationalAgent {
         },
         async (observation) => {
           try {
-            const toolResult = await this.toolExecutor.execute(toolCall);
+            const toolResult = await this.executeToolCall(toolCall, context);
             observation.update({
               output: toolResult.content,
               metadata: {
@@ -399,6 +415,20 @@ export class ConversationalAgent {
               toolCallId: toolCall.id,
               content: message,
               isError: true,
+              extra: {
+                providerRaw: toolCall.executionKind === "provider_native" || toolCall.provider !== "openai"
+                  ? undefined
+                  : {
+                    provider: "openai",
+                    inputItems: [
+                      {
+                        type: "function_call_output",
+                        call_id: toolCall.id,
+                        output: message,
+                      },
+                    ],
+                  },
+              },
             };
           }
         },
@@ -413,6 +443,27 @@ export class ConversationalAgent {
       });
     }
     return toolCalls;
+  }
+
+  private async executeToolCall(
+    toolCall: LLMToolCall,
+    context: AgentContext,
+  ) {
+    if (toolCall.executionKind === "provider_native") {
+      if (
+        !this.options.nativeToolRuntime ||
+        !this.options.nativeToolRuntime.supports(toolCall, this.nativeTools)
+      ) {
+        return {
+          toolCallId: toolCall.id,
+          content: `Native tool is not enabled: ${toolCall.name}`,
+          isError: true,
+        };
+      }
+      return this.options.nativeToolRuntime.execute(toolCall, context);
+    }
+
+    return this.toolExecutor.execute(toolCall);
   }
 
   private async executeEnforcedTools(

@@ -192,6 +192,45 @@ describe("OpenAIClient", () => {
       expect(callArgs.tools[0].name).toBe("calc");
     });
 
+    it("converts OpenAI native tool declarations", async () => {
+      mockCreate.mockResolvedValue({
+        id: "resp-native-tools",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "ok" }],
+          },
+        ],
+        status: "completed",
+      });
+
+      const client = makeClient();
+      await client.invoke({
+        messages: [{ role: "user", content: "inspect repo" }],
+        tools: [
+          {
+            kind: "provider_native",
+            provider: "openai",
+            type: "shell",
+            workingDir: "/workspace",
+            timeoutMs: 10_000,
+          },
+          {
+            kind: "provider_native",
+            provider: "openai",
+            type: "apply_patch",
+            allowedPaths: ["docs/spec"],
+          },
+        ],
+      });
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.tools).toEqual([
+        { type: "shell", environment: { type: "local" } },
+        { type: "apply_patch" },
+      ]);
+    });
+
     it("maps system messages to developer role", async () => {
       mockCreate.mockResolvedValue({
         id: "resp-5",
@@ -239,8 +278,236 @@ describe("OpenAIClient", () => {
 
       const callArgs = mockCreate.mock.calls[0][0];
       const input = callArgs.input;
-      expect(input[0].type).toBe("function_call_output");
+      expect(input[0].type).toBe("function_call");
       expect(input[0].call_id).toBe("fc-1");
+      expect(input[1].type).toBe("function_call_output");
+      expect(input[1].call_id).toBe("fc-1");
+    });
+
+    it("reuses providerRaw input items for native tool follow-up turns", async () => {
+      mockCreate.mockResolvedValue({
+        id: "resp-provider-raw",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "ok" }],
+          },
+        ],
+        status: "completed",
+      });
+
+      const client = makeClient();
+      await client.invoke({
+        messages: [
+          {
+            role: "tool",
+            content: "native output",
+            toolCallId: "shell-1",
+            name: "shell",
+            extra: {
+              providerRaw: {
+                provider: "openai",
+                inputItems: [
+                  { type: "shell_call", call_id: "shell-1", action: { commands: ["pwd"] } },
+                  { type: "shell_call_output", call_id: "shell-1", output: [] },
+                ],
+              },
+            },
+          },
+        ],
+      });
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.input).toEqual([
+        { type: "shell_call", call_id: "shell-1", action: { commands: ["pwd"] } },
+        { type: "shell_call_output", call_id: "shell-1", output: [] },
+      ]);
+    });
+
+    it("maps native tool calls from response output", async () => {
+      mockCreate.mockResolvedValue({
+        id: "resp-native-call",
+        output: [
+          {
+            type: "shell_call",
+            id: "shell-item-1",
+            call_id: "shell-call-1",
+            action: { commands: ["pwd"] },
+          },
+          {
+            type: "apply_patch_call",
+            id: "patch-item-1",
+            call_id: "patch-call-1",
+            input: [
+              {
+                type: "message",
+                role: "user",
+                content: [{ type: "input_text", text: "*** Begin Patch\n*** Update File: docs/spec/a.md\n@@\n-old\n+new\n*** End Patch" }],
+              },
+            ],
+          },
+        ],
+        status: "completed",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          total_tokens: 15,
+          input_tokens_details: {},
+          output_tokens_details: {},
+        },
+      });
+
+      const client = makeClient();
+      const result = await client.invoke(makeBasicInput());
+
+      expect(result.type).toBe("tool_use");
+      expect(result.toolCalls[0]).toMatchObject({
+        id: "shell-call-1",
+        name: "shell",
+        executionKind: "provider_native",
+        provider: "openai",
+        arguments: { commands: ["pwd"] },
+      });
+      expect(result.toolCalls[1]).toMatchObject({
+        id: "patch-call-1",
+        name: "apply_patch",
+        executionKind: "provider_native",
+        provider: "openai",
+        arguments: {
+          patch: "*** Begin Patch\n*** Update File: docs/spec/a.md\n@@\n-old\n+new\n*** End Patch",
+        },
+      });
+    });
+
+    it("parses string apply_patch arguments from response output", async () => {
+      mockCreate.mockResolvedValue({
+        id: "resp-native-call-string-args",
+        output: [
+          {
+            type: "apply_patch_call",
+            id: "patch-item-2",
+            call_id: "patch-call-2",
+            arguments: JSON.stringify({
+              type: "update_file",
+              path: "docs/spec/a.md",
+              diff: "@@\n-old\n+new",
+            }),
+          },
+        ],
+        status: "completed",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          total_tokens: 15,
+          input_tokens_details: {},
+          output_tokens_details: {},
+        },
+      });
+
+      const client = makeClient();
+      const result = await client.invoke(makeBasicInput());
+
+      expect(result.type).toBe("tool_use");
+      expect(result.toolCalls[0]).toMatchObject({
+        id: "patch-call-2",
+        name: "apply_patch",
+        executionKind: "provider_native",
+        provider: "openai",
+        arguments: {
+          type: "update_file",
+          path: "docs/spec/a.md",
+          diff: "@@\n-old\n+new",
+        },
+      });
+    });
+
+    it("parses operation apply_patch arguments from response output", async () => {
+      mockCreate.mockResolvedValue({
+        id: "resp-native-call-operation",
+        output: [
+          {
+            type: "apply_patch_call",
+            id: "patch-item-op",
+            call_id: "patch-call-op",
+            operation: {
+              type: "update_file",
+              path: "docs/spec/README.md",
+              diff: "@@\n-old\n+new",
+            },
+          },
+        ],
+        status: "completed",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          total_tokens: 15,
+          input_tokens_details: {},
+          output_tokens_details: {},
+        },
+      });
+
+      const client = makeClient();
+      const result = await client.invoke(makeBasicInput());
+
+      expect(result.type).toBe("tool_use");
+      expect(result.toolCalls[0]).toMatchObject({
+        id: "patch-call-op",
+        name: "apply_patch",
+        executionKind: "provider_native",
+        provider: "openai",
+        arguments: {
+          type: "update_file",
+          path: "docs/spec/README.md",
+          diff: "@@\n-old\n+new",
+        },
+      });
+    });
+
+    it("parses nested string patch content from response output", async () => {
+      mockCreate.mockResolvedValue({
+        id: "resp-native-call-nested-patch",
+        output: [
+          {
+            type: "apply_patch_call",
+            id: "patch-item-3",
+            call_id: "patch-call-3",
+            input: [
+              {
+                type: "message",
+                role: "user",
+                content: [
+                  {
+                    type: "input_text",
+                    text: "*** Begin Patch\n*** Add File: docs/spec/b.md\n+# B\n*** End Patch",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+        status: "completed",
+        usage: {
+          input_tokens: 10,
+          output_tokens: 5,
+          total_tokens: 15,
+          input_tokens_details: {},
+          output_tokens_details: {},
+        },
+      });
+
+      const client = makeClient();
+      const result = await client.invoke(makeBasicInput());
+
+      expect(result.type).toBe("tool_use");
+      expect(result.toolCalls[0]).toMatchObject({
+        id: "patch-call-3",
+        name: "apply_patch",
+        executionKind: "provider_native",
+        provider: "openai",
+        arguments: {
+          patch: "*** Begin Patch\n*** Add File: docs/spec/b.md\n+# B\n*** End Patch",
+        },
+      });
     });
 
     it("handles incomplete status as length finish reason", async () => {
@@ -291,6 +558,70 @@ describe("OpenAIClient", () => {
         effort: "high",
         summary: "concise",
       });
+    });
+  });
+
+  describe("stream", () => {
+    it("suppresses pseudo tool-call text from text deltas", async () => {
+      mockStream.mockReturnValue((async function* () {
+        yield {
+          type: "response.output_text.delta",
+          delta: "Before ",
+        };
+        yield {
+          type: "response.output_text.delta",
+          delta: "[tool_call: apply_patch(\"*** Begin Patch",
+        };
+        yield {
+          type: "response.output_text.delta",
+          delta: "\\n*** End Patch\")] After",
+        };
+        yield {
+          type: "response.output_text.done",
+          text: "Before [tool_call: apply_patch(\"*** Begin Patch\\n*** End Patch\")] After",
+        };
+        yield {
+          type: "response.completed",
+          response: {
+            id: "resp-stream-1",
+            output: [
+              {
+                type: "message",
+                content: [{ type: "output_text", text: "Before [tool_call: apply_patch(\"*** Begin Patch\\n*** End Patch\")] After" }],
+              },
+            ],
+            status: "completed",
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+              total_tokens: 15,
+              input_tokens_details: {},
+              output_tokens_details: {},
+            },
+          },
+        };
+      })());
+
+      const client = makeClient();
+      const events = [];
+      for await (const event of client.stream(makeBasicInput())) {
+        events.push(event);
+      }
+
+      expect(events).toContainEqual({ type: "text.delta", delta: "Before " });
+      expect(events).toContainEqual({ type: "text.done", text: "Before After" });
+      expect(events).toContainEqual({
+        type: "response.completed",
+        result: expect.objectContaining({
+          content: "Before After",
+          responseId: "resp-stream-1",
+        }),
+      });
+      expect(
+        events.some(
+          (event) => event.type === "text.delta" && event.delta.includes("[tool_call:"),
+        ),
+      ).toBe(false);
     });
   });
 

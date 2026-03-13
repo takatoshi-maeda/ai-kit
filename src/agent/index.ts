@@ -7,6 +7,7 @@ export { StructuredAgent } from "./structured.js";
 export { AgentRouter } from "./router.js";
 export type { AgentRouterOptions } from "./router.js";
 export { AgentProxy } from "./proxy.js";
+export { OpenAINativeToolRuntime } from "./native-tools/runtime.js";
 export {
   runBeforeTurnHooks,
   runAfterTurnHooks,

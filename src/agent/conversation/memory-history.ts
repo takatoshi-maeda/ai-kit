@@ -31,6 +31,9 @@ export class InMemoryHistory implements ConversationHistory {
     return this.messages.map((m) => ({
       role: m.role,
       content: m.content,
+      name: m.name,
+      toolCallId: m.toolCallId,
+      extra: m.extra,
     }));
   }
 

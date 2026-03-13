@@ -8,7 +8,7 @@ import type {
   ContentPart,
   ResponseFormat,
 } from "../../types/llm.js";
-import type { LLMToolCall } from "../../types/tool.js";
+import { isFunctionToolDefinition, type LLMToolCall } from "../../types/tool.js";
 import type { LLMStreamEvent } from "../../types/stream-events.js";
 import type { ModelCapabilities } from "../../types/model.js";
 import type { LLMClient, GoogleClientOptions } from "../client.js";
@@ -206,10 +206,11 @@ export class GoogleClient implements LLMClient {
       }));
     }
 
-    if (input.tools && input.tools.length > 0) {
+    const functionTools = input.tools?.filter(isFunctionToolDefinition) ?? [];
+    if (functionTools.length > 0) {
       config.tools = [
         {
-          functionDeclarations: input.tools.map((t) =>
+          functionDeclarations: functionTools.map((t) =>
             this.convertTool(t),
           ),
         },

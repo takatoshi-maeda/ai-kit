@@ -25,6 +25,7 @@ describe("toolCallsToMessages", () => {
     expect(messages[1].content).toBe("Found 3 results");
     expect(messages[1].toolCallId).toBe("call-1");
     expect(messages[1].name).toBe("search");
+    expect(messages[1].extra?.tool?.call.executionKind).toBe("user_function");
   });
 
   it("includes assistant content if provided", () => {

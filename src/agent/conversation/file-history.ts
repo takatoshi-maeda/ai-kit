@@ -11,6 +11,9 @@ interface StoredMessage {
   role: ConversationMessage["role"];
   content: string | ContentPart[];
   timestamp: string;
+  name?: string;
+  toolCallId?: string;
+  extra?: LLMMessage["extra"];
   metadata?: Record<string, unknown>;
 }
 
@@ -52,6 +55,9 @@ export class FileHistory implements ConversationHistory {
         role: stored.role,
         content: stored.content,
         timestamp: new Date(stored.timestamp),
+        name: stored.name,
+        toolCallId: stored.toolCallId,
+        extra: stored.extra,
         metadata: stored.metadata,
       });
     }
@@ -79,6 +85,9 @@ export class FileHistory implements ConversationHistory {
       role: message.role,
       content: message.content,
       timestamp: new Date().toISOString(),
+      name: message.name,
+      toolCallId: message.toolCallId,
+      extra: message.extra,
       metadata: message.metadata,
     };
     await fs.mkdir(path.dirname(this.filePath), { recursive: true });
@@ -90,6 +99,9 @@ export class FileHistory implements ConversationHistory {
     return messages.map((m) => ({
       role: m.role,
       content: m.content,
+      name: m.name,
+      toolCallId: m.toolCallId,
+      extra: m.extra,
     }));
   }
 
@@ -134,10 +146,28 @@ function parseStoredMessage(
     throw invalidLineError(filePath, lineNumber, "invalid metadata");
   }
 
+  const name = asRecord.name;
+  if (name !== undefined && typeof name !== "string") {
+    throw invalidLineError(filePath, lineNumber, "invalid name");
+  }
+
+  const toolCallId = asRecord.toolCallId;
+  if (toolCallId !== undefined && typeof toolCallId !== "string") {
+    throw invalidLineError(filePath, lineNumber, "invalid toolCallId");
+  }
+
+  const extra = asRecord.extra;
+  if (extra !== undefined && !isPlainObject(extra)) {
+    throw invalidLineError(filePath, lineNumber, "invalid extra");
+  }
+
   return {
     role,
     content,
     timestamp,
+    name,
+    toolCallId,
+    extra: extra as LLMMessage["extra"] | undefined,
     metadata: metadata as Record<string, unknown> | undefined,
   };
 }

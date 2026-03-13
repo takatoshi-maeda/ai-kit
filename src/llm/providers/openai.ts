@@ -7,7 +7,13 @@ import type {
   ContentPart,
   ResponseFormat,
 } from "../../types/llm.js";
-import type { LLMToolCall } from "../../types/tool.js";
+import {
+  isFunctionToolDefinition,
+  isProviderNativeTool,
+  type AgentTool,
+  type LLMToolCall,
+  type ProviderNativeTool,
+} from "../../types/tool.js";
 import type { LLMStreamEvent } from "../../types/stream-events.js";
 import type { ModelCapabilities } from "../../types/model.js";
 import type { LLMClient, OpenAIClientOptions } from "../client.js";
@@ -18,10 +24,10 @@ import {
   RateLimitError,
   ContextLengthExceededError,
 } from "../../errors.js";
-import type { ToolDefinition } from "../../types/tool.js";
-
 type ResponseInput = OpenAI.Responses.ResponseCreateParamsNonStreaming["input"];
 type ResponseInputItem = OpenAI.Responses.ResponseInputItem;
+const OPENAI_APPLY_PATCH_DEBUG_ENV = "CODEFLEET_DEBUG_OPENAI_APPLY_PATCH";
+const OPENAI_STREAM_DEBUG_ENV = "CODEFLEET_DEBUG_OPENAI_STREAM";
 
 export class OpenAIClient implements LLMClient {
   readonly provider = "openai" as const;
@@ -77,23 +83,33 @@ export class OpenAIClient implements LLMClient {
     const toolCalls = new Map<string, { name: string; args: string }>();
     let fullText = "";
     let reasoningText = "";
+    const pseudoToolCallFilter = new PseudoToolCallTextFilter();
 
     try {
       for await (const event of stream) {
+        debugOpenAIStreamEvent("received", event);
         switch (event.type) {
           case "response.created":
             responseId = event.response.id;
             yield { type: "response.created", responseId: event.response.id };
             break;
 
-          case "response.output_text.delta":
-            fullText += event.delta;
-            yield { type: "text.delta", delta: event.delta };
+          case "response.output_text.delta": {
+            const visibleDelta = pseudoToolCallFilter.consumeDelta(event.delta);
+            if (visibleDelta.length > 0) {
+              fullText += visibleDelta;
+              yield { type: "text.delta", delta: visibleDelta };
+            }
             break;
+          }
 
-          case "response.output_text.done":
-            yield { type: "text.done", text: event.text };
+          case "response.output_text.done": {
+            const visibleText = sanitizeVisibleAssistantText(event.text);
+            if (visibleText.length > 0) {
+              yield { type: "text.done", text: visibleText };
+            }
             break;
+          }
 
           case "response.function_call_arguments.delta": {
             const existing = toolCalls.get(event.item_id);
@@ -240,6 +256,12 @@ export class OpenAIClient implements LLMClient {
       const msg = messages[i];
 
       if (msg.role === "tool") {
+        const providerRawItems = this.getProviderRawInputItems(msg);
+        if (providerRawItems.length > 0) {
+          items.push(...providerRawItems);
+          continue;
+        }
+
         const toolRun: LLMMessage[] = [];
         let j = i;
         while (j < messages.length && messages[j].role === "tool") {
@@ -315,6 +337,14 @@ export class OpenAIClient implements LLMClient {
     return items;
   }
 
+  private getProviderRawInputItems(message: LLMMessage): ResponseInputItem[] {
+    const inputItems = message.extra?.providerRaw?.inputItems;
+    if (message.extra?.providerRaw?.provider !== "openai" || !Array.isArray(inputItems)) {
+      return [];
+    }
+    return inputItems as ResponseInputItem[];
+  }
+
   private convertContentParts(
     parts: ContentPart[],
   ): OpenAI.Responses.ResponseInputContent[] {
@@ -342,15 +372,19 @@ export class OpenAIClient implements LLMClient {
     });
   }
 
-  private convertTool(tool: ToolDefinition): OpenAI.Responses.FunctionTool {
-    const schema = toolToJsonSchema(tool);
-    return {
-      type: "function",
-      name: schema.name,
-      description: schema.description,
-      parameters: schema.parameters,
-      strict: false,
-    };
+  private convertTool(tool: AgentTool): OpenAI.Responses.Tool {
+    if (isFunctionToolDefinition(tool)) {
+      const schema = toolToJsonSchema(tool);
+      return {
+        type: "function",
+        name: schema.name,
+        description: schema.description,
+        parameters: schema.parameters,
+        strict: false,
+      };
+    }
+
+    return this.convertProviderNativeTool(tool);
   }
 
   private convertResponseFormat(
@@ -379,24 +413,20 @@ export class OpenAIClient implements LLMClient {
     let textContent = "";
 
     for (const item of response.output) {
-      if (item.type === "message") {
-        for (const part of item.content) {
+      const itemType = (item as { type: string }).type;
+      if (itemType === "message") {
+        const messageItem = item as OpenAI.Responses.ResponseOutputMessage;
+        for (const part of messageItem.content) {
           if (part.type === "output_text") {
-            textContent += part.text;
+            textContent += sanitizeVisibleAssistantText(part.text);
           }
         }
-      } else if (item.type === "function_call") {
-        let args: Record<string, unknown> = {};
-        try {
-          args = JSON.parse(item.arguments);
-        } catch {
-          // leave as empty object
-        }
-        toolCalls.push({
-          id: item.call_id,
-          name: item.name,
-          arguments: args,
-        });
+      } else if (itemType === "function_call") {
+        toolCalls.push(this.mapFunctionToolCall(item as OpenAI.Responses.ResponseFunctionToolCall));
+      } else if (itemType === "shell_call" || itemType === "local_shell_call") {
+        toolCalls.push(this.mapShellToolCall(item));
+      } else if (itemType === "apply_patch_call") {
+        toolCalls.push(this.mapApplyPatchToolCall(item));
       }
     }
 
@@ -418,6 +448,165 @@ export class OpenAIClient implements LLMClient {
       responseId: response.id,
       finishReason,
     };
+  }
+
+  private convertProviderNativeTool(
+    tool: ProviderNativeTool,
+  ): OpenAI.Responses.Tool {
+    if (tool.type === "shell") {
+      return ({
+        type: "shell",
+        environment: { type: "local" },
+      } as unknown) as OpenAI.Responses.Tool;
+    }
+
+    return ({
+      type: "apply_patch",
+    } as unknown) as OpenAI.Responses.Tool;
+  }
+
+  private mapFunctionToolCall(
+    item: OpenAI.Responses.ResponseFunctionToolCall,
+  ): LLMToolCall {
+    let args: Record<string, unknown> = {};
+    try {
+      args = JSON.parse(item.arguments);
+    } catch {
+      // leave as empty object
+    }
+    return {
+      id: item.call_id,
+      name: item.name,
+      arguments: args,
+      executionKind: "user_function",
+      provider: "openai",
+      extra: {
+        providerRaw: {
+          provider: "openai",
+          outputItems: [item],
+        },
+      },
+    };
+  }
+
+  private mapShellToolCall(item: OpenAI.Responses.ResponseOutputItem): LLMToolCall {
+    const shellItem = item as OpenAI.Responses.ResponseOutputItem & {
+      call_id?: string;
+      id?: string;
+      action?: Record<string, unknown>;
+    };
+    return {
+      id: shellItem.call_id ?? shellItem.id ?? crypto.randomUUID(),
+      name: "shell",
+      arguments: shellItem.action ?? {},
+      executionKind: "provider_native",
+      provider: "openai",
+      extra: {
+        providerRaw: {
+          provider: "openai",
+          outputItems: [item],
+        },
+      },
+    };
+  }
+
+  private mapApplyPatchToolCall(
+    item: OpenAI.Responses.ResponseOutputItem,
+  ): LLMToolCall {
+    const patchItem = item as OpenAI.Responses.ResponseOutputItem & {
+      call_id?: string;
+      id?: string;
+      arguments?: string;
+      operation?: unknown;
+      input?: Array<{ content?: unknown[] }>;
+    };
+    const firstContent =
+      Array.isArray(patchItem.input) &&
+        Array.isArray(patchItem.input[0]?.content)
+        ? patchItem.input[0].content[0]
+        : undefined;
+    const operation = this.parseApplyPatchOperation(
+      patchItem.arguments ?? patchItem.operation ?? firstContent ?? patchItem.input,
+    );
+    debugOpenAIApplyPatch("mapApplyPatchToolCall", {
+      itemId: patchItem.call_id ?? patchItem.id ?? null,
+      rawItem: item,
+      selectedValue: patchItem.arguments ?? patchItem.operation ?? firstContent ?? patchItem.input ?? null,
+      parsedOperation: operation,
+    });
+    return {
+      id: patchItem.call_id ?? patchItem.id ?? crypto.randomUUID(),
+      name: "apply_patch",
+      arguments: operation,
+      executionKind: "provider_native",
+      provider: "openai",
+      extra: {
+        providerRaw: {
+          provider: "openai",
+          outputItems: [item],
+        },
+      },
+    };
+  }
+
+  private parseApplyPatchOperation(value: unknown): Record<string, unknown> {
+    // OpenAI apply_patch payloads vary across runtimes. Normalize both raw patch
+    // strings and JSON-encoded operation payloads before the native runtime sees them.
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value) as unknown;
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          return parsed as Record<string, unknown>;
+        }
+      } catch {
+        if (value.includes("*** Begin Patch")) {
+          return { patch: value };
+        }
+      }
+      return {};
+    }
+    if (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      "text" in value &&
+      typeof (value as { text?: unknown }).text === "string"
+    ) {
+      return this.parseApplyPatchOperation((value as { text: string }).text);
+    }
+    if (Array.isArray(value)) {
+      for (const entry of value) {
+        const parsed = this.parseApplyPatchOperation(entry);
+        if (Object.keys(parsed).length > 0) {
+          return parsed;
+        }
+      }
+      return {};
+    }
+    if (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      "content" in value &&
+      Array.isArray((value as { content?: unknown[] }).content)
+    ) {
+      return this.parseApplyPatchOperation((value as { content: unknown[] }).content);
+    }
+    if (
+      value &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      "input" in value
+    ) {
+      const parsed = this.parseApplyPatchOperation((value as { input?: unknown }).input);
+      if (Object.keys(parsed).length > 0) {
+        return parsed;
+      }
+    }
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return value as Record<string, unknown>;
+    }
+    return {};
   }
 
   private mapUsage(usage?: OpenAI.Responses.ResponseUsage): LLMUsage {
@@ -466,6 +655,94 @@ export class OpenAIClient implements LLMClient {
     }
     if (error instanceof Error) return error;
     return new Error(String(error));
+  }
+}
+
+function debugOpenAIApplyPatch(stage: string, payload: Record<string, unknown>): void {
+  const envValue = process.env[OPENAI_APPLY_PATCH_DEBUG_ENV]?.trim().toLowerCase();
+  if (envValue !== "1" && envValue !== "true") {
+    return;
+  }
+  console.error(
+    `[ai-kit:openai:apply_patch] stage=${stage} payload=${safeSerializeForDebug(payload)}`,
+  );
+}
+
+function debugOpenAIStreamEvent(stage: string, payload: unknown): void {
+  const envValue = process.env[OPENAI_STREAM_DEBUG_ENV]?.trim().toLowerCase();
+  if (envValue !== "1" && envValue !== "true") {
+    return;
+  }
+  console.error(
+    `[ai-kit:openai:stream] stage=${stage} payload=${safeSerializeForDebug(payload)}`,
+  );
+}
+
+function safeSerializeForDebug(value: unknown): string {
+  try {
+    return JSON.stringify(value, createDebugReplacer());
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    return JSON.stringify({ serializationError: message });
+  }
+}
+
+function createDebugReplacer() {
+  const seen = new WeakSet<object>();
+  return (_key: string, value: unknown) => {
+    if (typeof value === "string" && value.length > 2_000) {
+      return `${value.slice(0, 2_000)}...[truncated ${value.length - 2_000} chars]`;
+    }
+    if (value && typeof value === "object") {
+      if (seen.has(value as object)) {
+        return "[circular]";
+      }
+      seen.add(value as object);
+    }
+    return value;
+  };
+}
+
+function sanitizeVisibleAssistantText(text: string): string {
+  return text.replace(/\s*\[tool_call:[\s\S]*?\)\]/g, "");
+}
+
+class PseudoToolCallTextFilter {
+  private buffer = "";
+  private suppressing = false;
+
+  consumeDelta(delta: string): string {
+    this.buffer += delta;
+    let visible = "";
+
+    while (this.buffer.length > 0) {
+      if (this.suppressing) {
+        const endIndex = this.buffer.indexOf(")]");
+        if (endIndex === -1) {
+          return visible;
+        }
+        this.buffer = this.buffer.slice(endIndex + 2);
+        this.suppressing = false;
+        continue;
+      }
+
+      const markerIndex = this.buffer.indexOf("[tool_call:");
+      if (markerIndex === -1) {
+        const safeFlushLength = Math.max(0, this.buffer.length - "[tool_call:".length);
+        if (safeFlushLength === 0) {
+          return visible;
+        }
+        visible += this.buffer.slice(0, safeFlushLength);
+        this.buffer = this.buffer.slice(safeFlushLength);
+        return visible;
+      }
+
+      visible += this.buffer.slice(0, markerIndex);
+      this.buffer = this.buffer.slice(markerIndex);
+      this.suppressing = true;
+    }
+
+    return visible;
   }
 }
 

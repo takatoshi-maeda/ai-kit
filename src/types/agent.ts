@@ -1,6 +1,12 @@
 import type { ZodType } from "zod";
 import type { LLMChatInput, LLMResult, LLMUsage } from "./llm.js";
-import type { LLMToolCall, LLMToolResult, ToolDefinition } from "./tool.js";
+import type {
+  AgentTool,
+  LLMToolCall,
+  LLMToolResult,
+  ProviderNativeTool,
+  ToolDefinition,
+} from "./tool.js";
 
 export interface AgentContext {
   history: ConversationHistory;
@@ -31,11 +37,12 @@ export interface AgentOptions {
   context: AgentContext;
   client: LLMClient;
   instructions: string;
-  tools?: ToolDefinition[];
+  tools?: AgentTool[];
   hooks?: AgentHooks;
   toolPipeline?: ToolPipeline;
   memory?: AgentMemory;
   maxTurns?: number;
+  nativeToolRuntime?: NativeToolRuntime;
 }
 
 export interface AgentHooks {
@@ -88,6 +95,11 @@ export interface ToolPipeline {
   onBeforeComplete?: ToolDefinition[];
 }
 
+export interface NativeToolRuntime {
+  supports(toolCall: LLMToolCall, availableTools: ProviderNativeTool[]): boolean;
+  execute(toolCall: LLMToolCall, context: AgentContext): Promise<LLMToolResult>;
+}
+
 // Forward-declared interfaces for types used by AgentOptions/AgentContext
 // Full implementations are in their respective modules
 
@@ -105,6 +117,9 @@ export interface ConversationMessage {
   role: "user" | "assistant" | "system" | "tool";
   content: string | import("./llm.js").ContentPart[];
   timestamp: Date;
+  name?: string;
+  toolCallId?: string;
+  extra?: import("./llm.js").LLMMessage["extra"];
   metadata?: Record<string, unknown>;
 }
 

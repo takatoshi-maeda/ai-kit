@@ -205,9 +205,11 @@ describe("AnthropicClient", () => {
       });
 
       const callArgs = mockCreate.mock.calls[0][0];
-      expect(callArgs.messages[0].role).toBe("user");
-      expect(callArgs.messages[0].content[0].type).toBe("tool_result");
-      expect(callArgs.messages[0].content[0].tool_use_id).toBe("tu-1");
+      expect(callArgs.messages[0].role).toBe("assistant");
+      expect(callArgs.messages[0].content[0].type).toBe("tool_use");
+      expect(callArgs.messages[1].role).toBe("user");
+      expect(callArgs.messages[1].content[0].type).toBe("tool_result");
+      expect(callArgs.messages[1].content[0].tool_use_id).toBe("tu-1");
     });
 
     it("maps toolChoice correctly", async () => {
