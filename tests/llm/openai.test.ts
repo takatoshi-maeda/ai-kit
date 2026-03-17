@@ -608,7 +608,13 @@ describe("OpenAIClient", () => {
         events.push(event);
       }
 
+      const streamedText = events
+        .filter((event) => event.type === "text.delta")
+        .map((event) => event.delta)
+        .join("");
+
       expect(events).toContainEqual({ type: "text.delta", delta: "Before " });
+      expect(streamedText).toBe("Before After");
       expect(events).toContainEqual({ type: "text.done", text: "Before After" });
       expect(events).toContainEqual({
         type: "response.completed",

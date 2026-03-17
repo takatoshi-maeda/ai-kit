@@ -83,6 +83,7 @@ export class OpenAIClient implements LLMClient {
     let responseId: string | undefined;
     const toolCalls = new Map<string, { name: string; args: string }>();
     let fullText = "";
+    let currentTextItem = "";
     let reasoningText = "";
     const pseudoToolCallFilter = new PseudoToolCallTextFilter();
 
@@ -153,13 +154,23 @@ export class OpenAIClient implements LLMClient {
             const visibleDelta = pseudoToolCallFilter.consumeDelta(event.delta);
             if (visibleDelta.length > 0) {
               fullText += visibleDelta;
+              currentTextItem += visibleDelta;
               yield { type: "text.delta", delta: visibleDelta };
             }
             break;
           }
 
           case "response.output_text.done": {
+            pseudoToolCallFilter.flush();
             const visibleText = sanitizeVisibleAssistantText(event.text);
+            if (visibleText.startsWith(currentTextItem)) {
+              const trailingVisibleText = visibleText.slice(currentTextItem.length);
+              if (trailingVisibleText.length > 0) {
+                fullText += trailingVisibleText;
+                yield { type: "text.delta", delta: trailingVisibleText };
+              }
+            }
+            currentTextItem = "";
             if (visibleText.length > 0) {
               yield { type: "text.done", text: visibleText };
             }
@@ -811,6 +822,13 @@ class PseudoToolCallTextFilter {
       this.suppressing = true;
     }
 
+    return visible;
+  }
+
+  flush(): string {
+    const visible = this.buffer;
+    this.buffer = "";
+    this.suppressing = false;
     return visible;
   }
 }

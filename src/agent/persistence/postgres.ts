@@ -111,7 +111,7 @@ export class PostgresPersistence implements AgentPersistence {
     const records = rows.map<ConversationRecord>((row) => ({
       type: row.event_type,
       data: row.data,
-      timestamp: row.event_timestamp,
+      timestamp: normalizeTimestamp(row.event_timestamp),
     }));
     return assembleConversation(sessionId, records, agentId);
   }
@@ -304,7 +304,7 @@ export class PostgresPersistence implements AgentPersistence {
     }
 
     const filtered = period
-      ? rows.filter((entry) => entry.created_at.startsWith(period))
+      ? rows.filter((entry) => normalizeTimestamp(entry.created_at).startsWith(period))
       : rows;
 
     const totalByCurrency: Record<string, number> = {};
@@ -351,7 +351,7 @@ export class PostgresPersistence implements AgentPersistence {
       status: data.status,
       result: data.result,
       agentId: data.agent_id ?? undefined,
-      createdAt: data.created_at,
+      createdAt: normalizeTimestamp(data.created_at),
     };
   }
 
@@ -539,4 +539,14 @@ function normalizeNumericId(value: unknown): number | null {
     return Number.isSafeInteger(asNumber) ? asNumber : null;
   }
   return null;
+}
+
+function normalizeTimestamp(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+  throw new Error(`Unexpected PostgreSQL timestamp value: ${String(value)}`);
 }

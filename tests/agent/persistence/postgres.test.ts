@@ -61,6 +61,39 @@ describe("PostgresPersistence", () => {
     });
   });
 
+  it("lists conversations when postgres returns Date timestamps", async () => {
+    const sql = createFakePostgresSql({ dateTimestamps: true });
+    const persistence = new PostgresPersistence({
+      appName: "chat-app",
+      sql,
+    });
+
+    await persistence.appendConversationTurn("session-1", {
+      turnId: "turn-1",
+      runId: "run-1",
+      timestamp: "2026-03-17T00:00:00.000Z",
+      userMessage: "Hello",
+      assistantMessage: "Hi",
+      status: "success",
+      agentId: "chat-app",
+    });
+
+    await persistence.appendUsage(0.1, "usd");
+
+    const summaries = await persistence.listConversationSummaries();
+    const usage = await persistence.summarizeUsage("2026-03");
+
+    expect(summaries).toHaveLength(1);
+    expect(summaries[0]?.updatedAt).toMatch(/^2026-03-\d{2}T/);
+    expect(usage).toEqual({
+      period: "2026-03",
+      cost: {
+        totalUsd: 0.1,
+        totalByCurrency: { usd: 0.1 },
+      },
+    });
+  });
+
   it("writes and reads idempotency records", async () => {
     const sql = createFakePostgresSql();
     const persistence = new PostgresPersistence({

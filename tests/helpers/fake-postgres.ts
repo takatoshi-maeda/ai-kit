@@ -24,7 +24,9 @@ export interface FakePostgresSql extends PostgresSqlLike {
   endCalls(): number;
 }
 
-export function createFakePostgresSql(options: { stringIds?: boolean } = {}): FakePostgresSql {
+export function createFakePostgresSql(
+  options: { stringIds?: boolean; dateTimestamps?: boolean } = {},
+): FakePostgresSql {
   const state: FakePostgresState = {
     conversations: [],
     conversation_events: [],
@@ -59,14 +61,15 @@ export function createFakePostgresSql(options: { stringIds?: boolean } = {}): Fa
         const [appName, sessionId, agentScope] = params;
         return state.conversations.filter((row) =>
           row.app_name === appName && row.session_id === sessionId && row.agent_scope === agentScope
-        ) as RowType[];
+        ).map((row) => withDateTimestamps(row, options.dateTimestamps)) as RowType[];
       }
 
       if (normalized.startsWith("select event_type") && table === "conversation_events") {
         const [conversationIdParam] = params;
         return state.conversation_events
           .filter((row) => row.conversation_id === conversationIdParam)
-          .sort((left, right) => Number(left.id) - Number(right.id)) as RowType[];
+          .sort((left, right) => Number(left.id) - Number(right.id))
+          .map((row) => withDateTimestamps(row, options.dateTimestamps)) as RowType[];
       }
 
       if (normalized.startsWith("select session_id, agent_id, updated_at") && table === "conversations") {
@@ -77,7 +80,8 @@ export function createFakePostgresSql(options: { stringIds?: boolean } = {}): Fa
         );
         scoped.sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)));
         const limit = Number(hasScope ? maybeLimit : maybeScope);
-        return (Number.isFinite(limit) ? scoped.slice(0, limit) : scoped) as RowType[];
+        return (Number.isFinite(limit) ? scoped.slice(0, limit) : scoped)
+          .map((row) => withDateTimestamps(row, options.dateTimestamps)) as RowType[];
       }
 
       if (normalized.startsWith("delete from") && table === "conversations") {
@@ -187,7 +191,7 @@ export function createFakePostgresSql(options: { stringIds?: boolean } = {}): Fa
           .map((row) => ({
             amount: row.amount,
             currency: row.currency,
-            created_at: row.created_at,
+            created_at: toMaybeDate(row.created_at, options.dateTimestamps),
           })) as RowType[];
       }
 
@@ -196,7 +200,7 @@ export function createFakePostgresSql(options: { stringIds?: boolean } = {}): Fa
         const row = state.idempotency_records.find((entry) =>
           entry.app_name === appName && entry.idempotency_key === key
         );
-        return row ? [row] as RowType[] : [];
+        return row ? [withDateTimestamps(row, options.dateTimestamps)] as RowType[] : [];
       }
 
       if (normalized.startsWith("insert into") && table === "idempotency_records") {
@@ -275,4 +279,24 @@ function detectTable(query: string): TableName | null {
   if (tableName.endsWith("usage_entries")) return "usage_entries";
   if (tableName.endsWith("idempotency_records")) return "idempotency_records";
   return null;
+}
+
+function withDateTimestamps(row: Row, enabled?: boolean): Row {
+  if (!enabled) {
+    return row;
+  }
+  return Object.fromEntries(
+    Object.entries(row).map(([key, value]) => [key, toMaybeDate(value, enabled, key)]),
+  );
+}
+
+function toMaybeDate(value: unknown, enabled?: boolean, key?: string): unknown {
+  if (!enabled || typeof value !== "string") {
+    return value;
+  }
+  if (!key || !/(?:_at|_timestamp)$/.test(key)) {
+    return value;
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? value : parsed;
 }
