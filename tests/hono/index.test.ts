@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { mountMcpRoutes } from "../../src/hono/index.js";
 import type {
   AgentDefinition,
+  AppGroupDefinition,
   MountableHonoApp,
 } from "../../src/hono/index.js";
 import {
@@ -129,5 +130,133 @@ describe("mountMcpRoutes", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/png");
     expect(Buffer.from(await response.arrayBuffer()).length).toBeGreaterThan(0);
+  });
+
+  it("accepts appName-based agent groups and preserves mountName compatibility", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "ai-kit-hono-group-"));
+    const groups: AppGroupDefinition[] = [
+      {
+        appName: "workspace",
+        description: "Workspace MCP app",
+        defaultAgentId: "writer",
+        agents: [
+          {
+            agentId: "writer",
+            description: "Writer agent",
+            create: () => null as never,
+          },
+        ],
+      },
+    ];
+
+    const mounts = await mountMcpRoutes(createStubApp(), {
+      agentGroups: groups,
+      persistence: {
+        kind: "filesystem",
+        dataDir,
+      },
+    });
+
+    const mount = mounts.get("workspace");
+    expect(mount?.definition.appName).toBe("workspace");
+    expect(mount?.definition.mountName).toBe("workspace");
+
+    await mount?.persistence.appendConversationTurn("session-group", {
+      turnId: "turn-1",
+      runId: "run-1",
+      timestamp: "2026-03-17T00:00:00.000Z",
+      userMessage: "Hello",
+      assistantMessage: "Hi",
+      status: "success",
+      agentId: "writer",
+    });
+
+    const stored = await readFile(
+      path.join(dataDir, "workspace", "conversations", "writer", "session-group.jsonl"),
+      "utf8",
+    );
+    expect(stored).toContain('"agentId":"writer"');
+  });
+
+  it("keeps public asset URLs and storage partitioned by appName for agent groups", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "ai-kit-hono-group-public-"));
+    const app = new Hono();
+    const mounts = await mountMcpRoutes(app, {
+      agentGroups: [
+        {
+          appName: "workspace",
+          defaultAgentId: "writer",
+          agents: [
+            {
+              agentId: "writer",
+              create: () => null as never,
+            },
+          ],
+        },
+      ],
+      persistence: {
+        kind: "filesystem",
+        dataDir,
+      },
+    });
+
+    const saved = await mounts.get("workspace")!.publicAssetStorage.saveImage({
+      agentId: "writer",
+      sessionId: "session/1",
+      mediaType: "image/png",
+      bytes: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7G8AAAAASUVORK5CYII=",
+        "base64",
+      ),
+      now: new Date("2026-03-17T00:00:00.000Z"),
+    });
+
+    expect(saved.storagePath.startsWith("workspace/public/")).toBe(true);
+
+    const response = await app.request(
+      `/api/mcp/workspace/public/ref/${encodeURIComponent(saved.assetRef)}`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+  });
+
+  it("lists apps while keeping the legacy agents payload", async () => {
+    const app = new Hono();
+    await mountMcpRoutes(app, {
+      agentGroups: [
+        {
+          appName: "workspace",
+          description: "Workspace MCP app",
+          defaultAgentId: "writer",
+          agents: [
+            {
+              agentId: "writer",
+              create: () => null as never,
+            },
+          ],
+        },
+      ],
+    });
+
+    const response = await app.request("/api/mcp");
+    const payload = await response.json() as {
+      apps: unknown;
+      agents: unknown;
+    };
+
+    expect(payload.apps).toEqual([
+      {
+        appName: "workspace",
+        name: "workspace",
+        description: "Workspace MCP app",
+      },
+    ]);
+    expect(payload.agents).toEqual([
+      {
+        name: "workspace",
+        description: "Workspace MCP app",
+      },
+    ]);
   });
 });

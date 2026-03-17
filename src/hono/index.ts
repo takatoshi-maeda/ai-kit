@@ -25,6 +25,11 @@ interface PendingRequest {
   reject: (error: Error) => void;
 }
 
+interface NormalizedAgentGroupDefinition extends AgentGroupDefinitionFields {
+  appName: string;
+  mountName: string;
+}
+
 export interface AgentDefinition {
   name: string;
   description?: string;
@@ -40,22 +45,39 @@ export interface AgentGroupAgentDefinition {
   create: AgentDefinition["create"];
 }
 
-export interface AgentGroupDefinition {
-  /** Current app-level HTTP mount name. Later phases will rename this to appName. */
-  mountName: string;
+interface AgentGroupDefinitionFields {
   description?: string;
   agents: AgentGroupAgentDefinition[];
   defaultAgentId?: string;
 }
 
-export interface AgentMountDefinition {
-  /** Current app-level HTTP mount name. Later phases will rename this to appName. */
+export interface AppGroupDefinition extends AgentGroupDefinitionFields {
+  appName: string;
+  /** @deprecated Use appName. */
+  mountName?: string;
+}
+
+/** @deprecated Use AppGroupDefinition. */
+export type AgentGroupDefinition =
+  | AppGroupDefinition
+  | (AgentGroupDefinitionFields & {
+    /** @deprecated Use appName. */
+    mountName: string;
+    appName?: string;
+  });
+
+export interface AppMountDefinition {
+  appName: string;
+  /** @deprecated Use appName. */
   mountName: string;
   description?: string;
 }
 
+/** @deprecated Use AppMountDefinition. */
+export type AgentMountDefinition = AppMountDefinition;
+
 export interface AgentMount {
-  definition: AgentMountDefinition;
+  definition: AppMountDefinition;
   mcpServer: SdkMcpServer;
   persistence: McpPersistence;
   publicAssetStorage: PublicAssetStorage;
@@ -66,7 +88,7 @@ export interface AgentMount {
 
 export interface MountMcpRoutesOptions {
   agentDefinitions?: AgentDefinition[];
-  agentGroups?: AgentGroupDefinition[];
+  agentGroups?: Array<AppGroupDefinition | AgentGroupDefinition>;
   dataDir?: string;
   basePath?: string;
   persistence?: PersistenceBackendOptions;
@@ -109,8 +131,8 @@ export async function mountMcpRoutes(
   );
   const startedAt = Date.now();
 
-  app.use(`${basePath}/:agent_name/*`, async (c, next) => {
-    const mount = mounts.get(c.req.param("agent_name"));
+  app.use(`${basePath}/:app_name/*`, async (c, next) => {
+    const mount = mounts.get(resolveAppNameParam(c));
     if (!mount) {
       return c.json({ error: "agent not found" }, 404);
     }
@@ -118,8 +140,8 @@ export async function mountMcpRoutes(
     await next();
   });
 
-  app.use(`${basePath}/:agent_name`, async (c, next) => {
-    const mount = mounts.get(c.req.param("agent_name"));
+  app.use(`${basePath}/:app_name`, async (c, next) => {
+    const mount = mounts.get(resolveAppNameParam(c));
     if (!mount) {
       return c.json({ error: "agent not found" }, 404);
     }
@@ -127,18 +149,18 @@ export async function mountMcpRoutes(
     await next();
   });
 
-  app.get(`${basePath}/:agent_name/public/*`, async (c) => {
-    const mountName = c.req.param("agent_name") ?? "";
-    const mount = mounts.get(mountName);
-    const routePrefix = `${basePath.replace(/\/+$/, "")}/${mountName}/public/`;
+  app.get(`${basePath}/:app_name/public/*`, async (c) => {
+    const appName = resolveAppNameParam(c);
+    const mount = mounts.get(appName);
+    const routePrefix = `${basePath.replace(/\/+$/, "")}/${appName}/public/`;
     const requested = c.req.path.startsWith(routePrefix)
       ? c.req.path.slice(routePrefix.length)
       : "";
-    if (!mountName || !mount || requested.length === 0) {
+    if (!appName || !mount || requested.length === 0) {
       return c.json({ error: "not found" }, 404);
     }
 
-    const assetRef = resolveRequestedPublicAssetRef(mountName, requested);
+    const assetRef = resolveRequestedPublicAssetRef(appName, requested);
     if (!assetRef) {
       return c.json({ error: "not found" }, 404);
     }
@@ -160,7 +182,7 @@ export async function mountMcpRoutes(
     });
   });
 
-  app.post(`${basePath}/:agent_name`, async (c) => {
+  app.post(`${basePath}/:app_name`, async (c) => {
     const mount = c.get("mount") as AgentMount;
     const { transport } = mount;
 
@@ -176,8 +198,8 @@ export async function mountMcpRoutes(
     }
 
     const message = payload as Record<string, unknown>;
-    const mountName = c.req.param("agent_name") ?? "";
-    const publicBaseUrl = resolvePublicBaseUrl(c.req.url, basePath, mountName);
+    const appName = resolveAppNameParam(c);
+    const publicBaseUrl = resolvePublicBaseUrl(c.req.url, basePath, appName);
     const requestWithHttpMarker = withHttpTransportToolCallMarker(message, publicBaseUrl);
     if (isNotification(message)) {
       transport.notify(requestWithHttpMarker as unknown as JSONRPCMessage);
@@ -198,7 +220,7 @@ export async function mountMcpRoutes(
     return sseResponseFromRequest(transport, requestWithHttpMarker);
   });
 
-  app.get(`${basePath}/:agent_name/status`, async (c) => {
+  app.get(`${basePath}/:app_name/status`, async (c) => {
     const mount = c.get("mount") as AgentMount;
     const health = await mount.persistence.checkHealth();
     return c.json({
@@ -210,7 +232,7 @@ export async function mountMcpRoutes(
     });
   });
 
-  app.post(`${basePath}/:agent_name/tools/call/:tool_name`, async (c) => {
+  app.post(`${basePath}/:app_name/tools/call/:tool_name`, async (c) => {
     const mount = c.get("mount") as AgentMount;
     const { transport } = mount;
     const toolNameFromPath = c.req.param("tool_name") ?? "";
@@ -251,7 +273,7 @@ export async function mountMcpRoutes(
     const publicBaseUrl = resolvePublicBaseUrl(
       c.req.url,
       basePath,
-      c.req.param("agent_name") ?? "",
+      resolveAppNameParam(c),
     );
     const argsWithHttpMarker = withHttpTransportArguments(
       resolvedToolName,
@@ -289,11 +311,15 @@ export async function mountMcpRoutes(
   });
 
   app.get(basePath, (c) => {
-    const agents = definitions.map((definition) => ({
-      name: definition.mountName,
+    const apps = definitions.map((definition) => ({
+      appName: definition.appName,
+      name: definition.appName,
       description: definition.description,
     }));
-    return c.json({ agents });
+    return c.json({
+      apps,
+      agents: apps.map(({ name, description }) => ({ name, description })),
+    });
   });
 
   return mounts;
@@ -397,11 +423,12 @@ class InProcessMcpTransport implements Transport, McpInProcessTransport {
 
 function normalizeAgentGroups(
   options: MountMcpRoutesOptions,
-): AgentGroupDefinition[] {
+): NormalizedAgentGroupDefinition[] {
   if (options.agentGroups && options.agentGroups.length > 0) {
-    return options.agentGroups;
+    return options.agentGroups.map(normalizeAgentGroupDefinition);
   }
   return (options.agentDefinitions ?? []).map((definition) => ({
+    appName: definition.name,
     mountName: definition.name,
     description: definition.description,
     defaultAgentId: definition.name,
@@ -416,7 +443,7 @@ function normalizeAgentGroups(
 }
 
 async function initAgentMounts(
-  definitions: AgentGroupDefinition[],
+  definitions: NormalizedAgentGroupDefinition[],
   options: MountMcpRoutesOptions,
   basePath: string,
   onMountCreated?: (mount: AgentMount) => Promise<void> | void,
@@ -424,7 +451,7 @@ async function initAgentMounts(
   const mounts = new Map<string, AgentMount>();
 
   for (const definition of definitions) {
-    const bundle = await createPersistenceBundle(definition.mountName, {
+    const bundle = await createPersistenceBundle(definition.appName, {
       persistence: options.persistence ?? { kind: "filesystem", dataDir: "data" },
     });
     const persistence = bundle.persistence;
@@ -438,18 +465,19 @@ async function initAgentMounts(
     });
 
     const mcpServer = buildMcpServer({
-      serverName: definition.mountName,
-      appName: definition.mountName,
+      serverName: definition.appName,
+      appName: definition.appName,
       persistence,
       agentRegistry: registry,
       publicAssetStorage: bundle.publicAssetStorage,
       publicAssetsDir: bundle.publicAssetsDir,
-      publicAssetsBasePath: `${basePath.replace(/\/+$/, "")}/${definition.mountName}/public`,
+      publicAssetsBasePath: `${basePath.replace(/\/+$/, "")}/${definition.appName}/public`,
     });
 
     const transport = new InProcessMcpTransport();
     const mount: AgentMount = {
       definition: {
+        appName: definition.appName,
         mountName: definition.mountName,
         description: definition.description,
       },
@@ -468,10 +496,31 @@ async function initAgentMounts(
     await mcpServer.connect(transport);
     await transport.init();
 
-    mounts.set(definition.mountName, mount);
+    mounts.set(definition.appName, mount);
   }
 
   return mounts;
+}
+
+function normalizeAgentGroupDefinition(
+  definition: AppGroupDefinition | AgentGroupDefinition,
+): NormalizedAgentGroupDefinition {
+  const appName = resolveAppName(definition);
+  return {
+    ...definition,
+    appName,
+    mountName: appName,
+  };
+}
+
+function resolveAppName(
+  definition: { appName?: string; mountName?: string },
+): string {
+  const appName = definition.appName ?? definition.mountName;
+  if (!appName) {
+    throw new Error("Agent group definition requires appName");
+  }
+  return appName;
 }
 
 function handleBridgePayload(
@@ -647,17 +696,23 @@ function withHttpTransportArguments(
 function resolvePublicBaseUrl(
   requestUrl: string,
   basePath: string,
-  agentName: string,
+  appName: string,
 ): string | undefined {
-  if (!agentName) {
+  if (!appName) {
     return undefined;
   }
   try {
     const parsed = new URL(requestUrl);
-    return `${parsed.origin}${basePath.replace(/\/+$/, "")}/${agentName}/public`;
+    return `${parsed.origin}${basePath.replace(/\/+$/, "")}/${appName}/public`;
   } catch {
     return undefined;
   }
+}
+
+function resolveAppNameParam(
+  context: { req: { param(name: string): string | undefined } },
+): string {
+  return context.req.param("app_name") ?? "";
 }
 
 function resolveRequestedPublicAssetRef(
