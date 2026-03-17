@@ -13,7 +13,7 @@ export async function handleHealthCheck(
     timestamp: new Date().toISOString(),
     dependencies: {
       storage: {
-        driver: "filesystem",
+        driver: result.driver ?? "filesystem",
         ok: result.ok,
         error: result.error ?? null,
       },

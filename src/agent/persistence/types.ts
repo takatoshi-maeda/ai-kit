@@ -119,6 +119,12 @@ export interface RunState {
   agentName?: string;
 }
 
+export interface PersistenceHealthResult {
+  ok: boolean;
+  error?: string;
+  driver?: string;
+}
+
 /**
  * Agent 永続化インターフェース。
  * JSONL ファイル / Supabase / DynamoDB など任意のバックエンドで実装可能。
@@ -161,7 +167,7 @@ export interface AgentPersistence {
   writeIdempotencyRecord(record: IdempotencyRecord): Promise<void>;
 
   /** ヘルスチェック */
-  checkHealth(): Promise<{ ok: boolean; error?: string }>;
+  checkHealth(): Promise<PersistenceHealthResult>;
 }
 
 /**

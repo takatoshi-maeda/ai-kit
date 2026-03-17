@@ -1,5 +1,6 @@
 export interface SavePublicImageInput {
   sessionId: string;
+  agentId?: string;
   mediaType: string;
   bytes: Uint8Array;
   now?: Date;

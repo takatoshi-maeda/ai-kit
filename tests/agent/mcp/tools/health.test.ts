@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from "vitest";
 import { handleHealthCheck } from "../../../../src/agent/mcp/tools/health.js";
 import type { McpPersistence } from "../../../../src/agent/mcp/persistence.js";
 
-function stubPersistence(ok: boolean, error?: string): McpPersistence {
+function stubPersistence(ok: boolean, error?: string, driver?: string): McpPersistence {
   return {
     readConversation: vi.fn(async () => null),
     listConversationSummaries: vi.fn(async () => []),
@@ -15,7 +15,7 @@ function stubPersistence(ok: boolean, error?: string): McpPersistence {
     summarizeUsage: vi.fn(async () => null),
     readIdempotencyRecord: vi.fn(async () => null),
     writeIdempotencyRecord: vi.fn(async () => {}),
-    checkHealth: vi.fn(async () => ({ ok, error })),
+    checkHealth: vi.fn(async () => ({ ok, error, driver })),
   };
 }
 
@@ -31,5 +31,12 @@ describe("health tools", () => {
     expect(parsed.dependencies.storage.error).toBeNull();
     expect(result.structuredContent).toEqual(parsed);
     expect(result.isError).toBe(false);
+  });
+
+  it("surfaces non-filesystem storage drivers", async () => {
+    const result = await handleHealthCheck(stubPersistence(true, undefined, "supabase"));
+    const parsed = JSON.parse(result.content[0].text);
+
+    expect(parsed.dependencies.storage.driver).toBe("supabase");
   });
 });

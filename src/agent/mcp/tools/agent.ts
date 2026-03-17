@@ -192,6 +192,7 @@ export async function handleAgentRun(
     resolvedUserInput,
     {
       appName: deps.appName,
+      agentId,
       sessionId,
       publicAssetStorage: deps.publicAssetStorage,
       publicAssetsDir: deps.publicAssetsDir,
@@ -834,6 +835,7 @@ function toUserMessagePreview(input: string | ContentPart[]): string {
 
 interface NormalizeUserInputOptions {
   appName?: string;
+  agentId?: string;
   sessionId: string;
   publicAssetStorage?: PublicAssetStorage;
   publicAssetsDir?: string;
@@ -904,6 +906,7 @@ async function normalizeUserInputForPersistence(
     }
 
     const saved = await publicAssetStorage.saveImage({
+      agentId: options.agentId,
       sessionId: options.sessionId,
       mediaType,
       bytes: imageBytes,

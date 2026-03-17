@@ -1,9 +1,12 @@
 import path from "node:path";
 import { FileSystemStorage } from "../../storage/fs.js";
 import { FileSystemPublicAssetStorage } from "../public-assets/filesystem.js";
+import { SupabasePublicAssetStorage } from "../public-assets/supabase.js";
 import type { PublicAssetStorage } from "../public-assets/storage.js";
 import { FilesystemPersistence } from "./filesystem.js";
+import { SupabasePersistence } from "./supabase.js";
 import type { AgentPersistence } from "./types.js";
+import { createSupabaseBackendClient } from "../supabase/client.js";
 
 export interface FileSystemBackend {
   kind: "filesystem";
@@ -46,7 +49,7 @@ export async function createPersistenceBundle(
     case "filesystem":
       return createFilesystemPersistenceBundle(appName, options.persistence);
     case "supabase":
-      throw new Error("Supabase persistence backend is not implemented yet");
+      return createSupabasePersistenceBundle(appName, options.persistence);
     default:
       return assertNever(options.persistence);
   }
@@ -66,6 +69,31 @@ function createFilesystemPersistenceBundle(
       publicDir: publicAssetsDir,
     }),
     publicAssetsDir,
+  };
+}
+
+function createSupabasePersistenceBundle(
+  appName: string,
+  options: SupabaseBackend,
+): PersistenceBundle {
+  const client = createSupabaseBackendClient({
+    url: options.url,
+    serviceRoleKey: options.serviceRoleKey,
+    schema: options.schema,
+  });
+
+  return {
+    persistence: new SupabasePersistence({
+      appName,
+      tablePrefix: options.tablePrefix,
+      client,
+    }),
+    publicAssetStorage: new SupabasePublicAssetStorage({
+      appName,
+      bucket: options.bucket,
+      signedUrlExpiresInSeconds: options.signedUrlExpiresInSeconds,
+      client,
+    }),
   };
 }
 

@@ -59,8 +59,12 @@ export {
   AgentRegistry,
   JsonlMcpPersistence,
   FilesystemPersistence,
+  SupabasePersistence,
   createPersistenceBundle,
   FileSystemPublicAssetStorage,
+  SupabasePublicAssetStorage,
+  fromSupabaseAssetRef,
+  toSupabaseAssetRef,
 } from "./mcp/index.js";
 export type {
   CreateMcpServerOptions,

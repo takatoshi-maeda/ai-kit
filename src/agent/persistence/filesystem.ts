@@ -233,16 +233,17 @@ export class FilesystemPersistence implements AgentPersistence {
     );
   }
 
-  async checkHealth(): Promise<{ ok: boolean; error?: string }> {
+  async checkHealth(): Promise<{ ok: boolean; error?: string; driver?: string }> {
     try {
       const testPath = "_health_check_test";
       await this.storage.writeText(testPath, "ok");
       const result = await this.storage.readText(testPath);
       await this.storage.deleteFile(testPath);
-      return { ok: result === "ok" };
+      return { ok: result === "ok", driver: "filesystem" };
     } catch (err) {
       return {
         ok: false,
+        driver: "filesystem",
         error: err instanceof Error ? err.message : String(err),
       };
     }
