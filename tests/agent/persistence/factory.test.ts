@@ -6,6 +6,7 @@ import { mkdtemp } from "node:fs/promises";
 import { createPersistenceBundle } from "../../../src/agent/persistence/factory.js";
 import { FilesystemPersistence } from "../../../src/agent/persistence/filesystem.js";
 import { FileSystemPublicAssetStorage } from "../../../src/agent/public-assets/filesystem.js";
+import { createFakePostgresSql } from "../../helpers/fake-postgres.js";
 import { createFakeSupabaseClient } from "../../helpers/fake-supabase.js";
 
 describe("createPersistenceBundle", () => {
@@ -85,5 +86,54 @@ describe("createPersistenceBundle", () => {
     expect(fakeClient.tableRows("custom_conversation_events")).toHaveLength(2);
 
     vi.doUnmock("@supabase/supabase-js");
+  });
+
+  it("creates a postgres-backed bundle when the backend kind is postgres", async () => {
+    const fakeSql = createFakePostgresSql();
+    const assetDataDir = await mkdtemp(path.join(os.tmpdir(), "ai-kit-pg-assets-"));
+
+    vi.resetModules();
+    vi.doMock("../../../src/agent/postgres/client.js", async () => {
+      const actual = await vi.importActual<typeof import("../../../src/agent/postgres/client.js")>(
+        "../../../src/agent/postgres/client.js",
+      );
+      return {
+        ...actual,
+        createPostgresClient: vi.fn(() => fakeSql),
+      };
+    });
+
+    const { createPersistenceBundle: createPostgresBundle } = await import(
+      "../../../src/agent/persistence/factory.js"
+    );
+    const { PostgresPersistence } = await import(
+      "../../../src/agent/persistence/postgres.js"
+    );
+
+    const bundle = await createPostgresBundle("chat-app", {
+      persistence: {
+        kind: "postgres",
+        connectionString: "postgresql://postgres:postgres@example.com:5432/postgres",
+        tablePrefix: "custom_",
+        assetDataDir,
+      },
+    });
+
+    expect(bundle.persistence).toBeInstanceOf(PostgresPersistence);
+    expect(typeof bundle.publicAssetStorage.saveImage).toBe("function");
+    expect(bundle.publicAssetsDir).toContain(path.join("chat-app", "public"));
+
+    await bundle.persistence.appendConversationTurn("session-1", {
+      turnId: "turn-1",
+      runId: "run-1",
+      timestamp: "2026-03-17T00:00:00.000Z",
+      userMessage: "Hello",
+      assistantMessage: "Hi",
+      status: "success",
+      agentId: "chat-app",
+    });
+
+    expect(fakeSql.tableRows("conversations")).toHaveLength(1);
+    expect(fakeSql.tableRows("conversation_events")).toHaveLength(2);
   });
 });

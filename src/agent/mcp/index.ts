@@ -10,10 +10,12 @@ export { AgentRegistry } from "./agent-registry.js";
 export type { AgentEntry, AgentRegistryOptions } from "./agent-registry.js";
 export { JsonlMcpPersistence } from "./jsonl-persistence.js";
 export { FilesystemPersistence } from "../persistence/filesystem.js";
+export { PostgresPersistence } from "../persistence/postgres.js";
 export { SupabasePersistence } from "../persistence/supabase.js";
 export type {
   CreatePersistenceBundleOptions,
   FileSystemBackend,
+  PostgresBackend,
   PersistenceBackendOptions,
   PersistenceBundle,
   SupabaseBackend,

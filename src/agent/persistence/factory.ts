@@ -4,8 +4,10 @@ import { FileSystemPublicAssetStorage } from "../public-assets/filesystem.js";
 import { SupabasePublicAssetStorage } from "../public-assets/supabase.js";
 import type { PublicAssetStorage } from "../public-assets/storage.js";
 import { FilesystemPersistence } from "./filesystem.js";
+import { PostgresPersistence } from "./postgres.js";
 import { SupabasePersistence } from "./supabase.js";
 import type { AgentPersistence } from "./types.js";
+import { createPostgresClient } from "../postgres/client.js";
 import { createSupabaseBackendClient } from "../supabase/client.js";
 
 export interface FileSystemBackend {
@@ -23,9 +25,18 @@ export interface SupabaseBackend {
   signedUrlExpiresInSeconds?: number;
 }
 
+export interface PostgresBackend {
+  kind: "postgres";
+  connectionString: string;
+  schema?: string;
+  tablePrefix?: string;
+  assetDataDir?: string;
+}
+
 export type PersistenceBackendOptions =
   | FileSystemBackend
-  | SupabaseBackend;
+  | SupabaseBackend
+  | PostgresBackend;
 
 export interface PersistenceBundle {
   persistence: AgentPersistence;
@@ -50,6 +61,8 @@ export async function createPersistenceBundle(
       return createFilesystemPersistenceBundle(appName, options.persistence);
     case "supabase":
       return createSupabasePersistenceBundle(appName, options.persistence);
+    case "postgres":
+      return createPostgresPersistenceBundle(appName, options.persistence);
     default:
       return assertNever(options.persistence);
   }
@@ -94,6 +107,31 @@ function createSupabasePersistenceBundle(
       signedUrlExpiresInSeconds: options.signedUrlExpiresInSeconds,
       client,
     }),
+  };
+}
+
+function createPostgresPersistenceBundle(
+  appName: string,
+  options: PostgresBackend,
+): PersistenceBundle {
+  const rootDir = path.resolve(options.assetDataDir ?? "data", appName);
+  const publicAssetsDir = path.join(rootDir, "public");
+  const sql = createPostgresClient({
+    connectionString: options.connectionString,
+  });
+
+  return {
+    persistence: new PostgresPersistence({
+      appName,
+      schema: options.schema,
+      tablePrefix: options.tablePrefix,
+      sql,
+    }),
+    publicAssetStorage: new FileSystemPublicAssetStorage({
+      appName,
+      publicDir: publicAssetsDir,
+    }),
+    publicAssetsDir,
   };
 }
 

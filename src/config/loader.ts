@@ -132,6 +132,11 @@ function isPersistenceBackendOptions(value: unknown): value is PersistenceBacken
           value.signedUrlExpiresInSeconds === undefined ||
           typeof value.signedUrlExpiresInSeconds === "number"
         );
+    case "postgres":
+      return typeof value.connectionString === "string" &&
+        (value.schema === undefined || typeof value.schema === "string") &&
+        (value.tablePrefix === undefined || typeof value.tablePrefix === "string") &&
+        (value.assetDataDir === undefined || typeof value.assetDataDir === "string");
     default:
       return false;
   }

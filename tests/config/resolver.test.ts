@@ -63,6 +63,35 @@ describe("resolveAiKitOptions", () => {
     });
   });
 
+  it("returns postgres persistence from config when configured", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ai-kit-resolve-"));
+    const configPath = path.join(cwd, "ai-kit.config.mjs");
+    await writeFile(
+      configPath,
+      [
+        "export default {",
+        '  persistence: {',
+        '    kind: "postgres",',
+        '    connectionString: "postgresql://postgres:postgres@example.com:5432/postgres",',
+        '    tablePrefix: "custom_"',
+        "  }",
+        "};",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const resolved = await resolveAiKitOptions({
+      agentDefinitions: [],
+      configFile: configPath,
+    });
+
+    expect(resolved.persistence).toEqual({
+      kind: "postgres",
+      connectionString: "postgresql://postgres:postgres@example.com:5432/postgres",
+      tablePrefix: "custom_",
+    });
+  });
+
   it("auto-discovers ai-kit.config from process.cwd when configFile is omitted", async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), "ai-kit-resolve-"));
     await writeFile(

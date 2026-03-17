@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createFakePostgresSql } from "../helpers/fake-postgres.js";
 
 describe("runSetupCommand", () => {
   beforeEach(() => {
@@ -28,6 +29,48 @@ describe("runSetupCommand", () => {
 
     expect(message).toContain("Filesystem backend is ready");
     const result = await stat(path.join(cwd, "runtime-data"));
+    expect(result.isDirectory()).toBe(true);
+  });
+
+  it("creates postgres tables directly through postgres.js", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ai-kit-cli-setup-pg-"));
+    const configPath = path.join(cwd, "ai-kit.config.mjs");
+    const fakeSql = createFakePostgresSql();
+    await writeFile(
+      configPath,
+      [
+        "export default {",
+        '  persistence: {',
+        '    kind: "postgres",',
+        '    connectionString: "postgresql://postgres:postgres@example.com:5432/postgres",',
+        '    schema: "custom_schema",',
+        '    tablePrefix: "custom_",',
+        '    assetDataDir: "./runtime-assets"',
+        "  }",
+        "};",
+      ].join("\n"),
+      "utf8",
+    );
+
+    vi.doMock("../../src/agent/postgres/client.js", async () => {
+      const actual = await vi.importActual<typeof import("../../src/agent/postgres/client.js")>(
+        "../../src/agent/postgres/client.js",
+      );
+      return {
+        ...actual,
+        createPostgresClient: vi.fn(() => fakeSql),
+      };
+    });
+
+    const { runSetupCommand } = await import("../../src/cli/commands/setup.js");
+    const message = await runSetupCommand({
+      cwd,
+      configFile: configPath,
+    });
+
+    expect(message).toContain("Postgres backend setup completed");
+    expect(fakeSql.appliedSql().join("\n")).toContain('create schema if not exists "custom_schema";');
+    const result = await stat(path.join(cwd, "runtime-assets"));
     expect(result.isDirectory()).toBe(true);
   });
 

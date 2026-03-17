@@ -78,4 +78,35 @@ describe("loadAiKitConfig", () => {
       },
     });
   });
+
+  it("accepts postgres persistence config", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ai-kit-config-"));
+    await writeFile(
+      path.join(cwd, "ai-kit.config.mjs"),
+      [
+        "export default {",
+        '  persistence: {',
+        '    kind: "postgres",',
+        '    connectionString: "postgresql://postgres:postgres@example.com:5432/postgres",',
+        '    schema: "custom_schema",',
+        '    tablePrefix: "custom_",',
+        '    assetDataDir: "./runtime-assets"',
+        "  }",
+        "};",
+      ].join("\n"),
+      "utf8",
+    );
+
+    const config = await loadAiKitConfig({ cwd });
+
+    expect(config).toEqual({
+      persistence: {
+        kind: "postgres",
+        connectionString: "postgresql://postgres:postgres@example.com:5432/postgres",
+        schema: "custom_schema",
+        tablePrefix: "custom_",
+        assetDataDir: "./runtime-assets",
+      },
+    });
+  });
 });

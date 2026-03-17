@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createFakePostgresSql } from "../helpers/fake-postgres.js";
 import type { SupabaseClientLike, SupabaseQueryLike, SupabaseQueryResult } from "../../src/agent/supabase/client.js";
 
 describe("runDoctorCommand", () => {
@@ -73,6 +74,54 @@ describe("runDoctorCommand", () => {
       expect.arrayContaining([
         expect.objectContaining({ name: "table:public.ai_kit_conversation_events", ok: false }),
         expect.objectContaining({ name: "table:public.ai_kit_input_history", ok: false }),
+      ]),
+    );
+  });
+
+  it("reports postgres resources in json mode", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ai-kit-cli-doctor-pg-"));
+    const configPath = path.join(cwd, "ai-kit.config.mjs");
+    const fakeSql = createFakePostgresSql();
+    fakeSql.markMissingTable("conversation_events");
+    await writeFile(
+      configPath,
+      [
+        "export default {",
+        '  persistence: {',
+        '    kind: "postgres",',
+        '    connectionString: "postgresql://postgres:secret@example.com:5432/postgres",',
+        '    assetDataDir: "./runtime-assets"',
+        "  }",
+        "};",
+      ].join("\n"),
+      "utf8",
+    );
+
+    vi.doMock("../../src/agent/postgres/client.js", async () => {
+      const actual = await vi.importActual<typeof import("../../src/agent/postgres/client.js")>(
+        "../../src/agent/postgres/client.js",
+      );
+      return {
+        ...actual,
+        createPostgresClient: vi.fn(() => fakeSql),
+      };
+    });
+
+    const { runDoctorCommand } = await import("../../src/cli/commands/doctor.js");
+    const output = await runDoctorCommand({ configFile: configPath, json: true });
+    const parsed = JSON.parse(output) as {
+      ok: boolean;
+      config: { connectionString: string };
+      checks: Array<{ name: string; ok: boolean }>;
+    };
+
+    expect(parsed.ok).toBe(false);
+    expect(parsed.config.connectionString).toContain(":***@");
+    expect(fakeSql.endCalls()).toBeGreaterThanOrEqual(2);
+    expect(parsed.checks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "table:public.ai_kit_conversation_events", ok: false }),
+        expect.objectContaining({ name: expect.stringContaining("assetDir:"), ok: true }),
       ]),
     );
   });

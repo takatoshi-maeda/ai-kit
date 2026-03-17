@@ -5,6 +5,7 @@ export { resolveAiKitOptions } from "./resolver.js";
 export type {
   CreatePersistenceBundleOptions,
   FileSystemBackend,
+  PostgresBackend,
   PersistenceBackendOptions,
   PersistenceBundle,
   SupabaseBackend,

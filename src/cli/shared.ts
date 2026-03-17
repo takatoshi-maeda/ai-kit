@@ -3,9 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { createPostgresClient } from "../agent/postgres/client.js";
+import { PostgresPersistence } from "../agent/persistence/postgres.js";
 import { createSupabaseBackendClient } from "../agent/supabase/client.js";
 import { loadAiKitConfig } from "../config/loader.js";
-import type { PersistenceBackendOptions, SupabaseBackend } from "../agent/persistence/factory.js";
+import type {
+  PersistenceBackendOptions,
+  PostgresBackend,
+  SupabaseBackend,
+} from "../agent/persistence/factory.js";
 
 const execFileAsync = promisify(execFile);
 const DEFAULT_FILESYSTEM_DATA_DIR = "data";
@@ -54,6 +60,12 @@ export interface ResolvedSupabaseCliConfig extends SupabaseBackend {
   bucket: string;
 }
 
+export interface ResolvedPostgresCliConfig extends PostgresBackend {
+  schema: string;
+  tablePrefix: string;
+  assetDataDir: string;
+}
+
 export async function resolveCliPersistence(
   options: CliGlobalOptions,
 ): Promise<PersistenceBackendOptions> {
@@ -99,13 +111,39 @@ export function resolveSupabaseConfig(
   };
 }
 
+export function resolvePostgresConfig(
+  persistence: PersistenceBackendOptions,
+  overrides: Pick<SetupCommandOptions, "schema" | "tablePrefix">,
+  cwd?: string,
+): ResolvedPostgresCliConfig {
+  if (persistence.kind !== "postgres") {
+    throw new Error(`Expected postgres persistence, got "${persistence.kind}"`);
+  }
+
+  const baseDir = path.resolve(cwd ?? process.cwd());
+  return {
+    ...persistence,
+    schema: overrides.schema ?? persistence.schema ?? DEFAULT_SUPABASE_SCHEMA,
+    tablePrefix: overrides.tablePrefix ?? persistence.tablePrefix ?? DEFAULT_SUPABASE_TABLE_PREFIX,
+    assetDataDir: path.resolve(baseDir, persistence.assetDataDir ?? DEFAULT_FILESYSTEM_DATA_DIR),
+  };
+}
+
 export function listSupabaseTables(config: ResolvedSupabaseCliConfig): string[] {
+  return listPersistenceTables(config.tablePrefix);
+}
+
+export function listPostgresTables(config: ResolvedPostgresCliConfig): string[] {
+  return listPersistenceTables(config.tablePrefix);
+}
+
+function listPersistenceTables(tablePrefix: string): string[] {
   return [
-    `${config.tablePrefix}conversations`,
-    `${config.tablePrefix}conversation_events`,
-    `${config.tablePrefix}input_history`,
-    `${config.tablePrefix}usage_entries`,
-    `${config.tablePrefix}idempotency_records`,
+    `${tablePrefix}conversations`,
+    `${tablePrefix}conversation_events`,
+    `${tablePrefix}input_history`,
+    `${tablePrefix}usage_entries`,
+    `${tablePrefix}idempotency_records`,
   ];
 }
 
@@ -163,6 +201,20 @@ export async function runSupabaseSetup(
       projectDir,
       migrationsDir,
     })}`);
+  }
+}
+
+export async function runPostgresSetup(
+  config: ResolvedPostgresCliConfig,
+  options: { dbUrl?: string } = {},
+): Promise<void> {
+  const sql = createPostgresClient({
+    connectionString: options.dbUrl ?? config.connectionString,
+  });
+  try {
+    await sql.unsafe(buildPostgresSetupSql(config));
+  } finally {
+    await sql.end?.({ timeout: 0 });
   }
 }
 
@@ -254,14 +306,86 @@ export async function inspectSupabaseResources(
   return checks;
 }
 
+export async function inspectPostgresResources(
+  config: ResolvedPostgresCliConfig,
+): Promise<DoctorCheckResult[]> {
+  const checks: DoctorCheckResult[] = [];
+  const backend = new PostgresPersistence({
+    appName: "ai-kit-doctor",
+    connectionString: config.connectionString,
+    schema: config.schema,
+    tablePrefix: config.tablePrefix,
+  });
+  try {
+    const health = await backend.checkHealth();
+    checks.push({
+      name: "connectivity",
+      ok: health.ok,
+      detail: health.ok ? "query ok" : (health.error ?? "connectivity check failed"),
+    });
+  } finally {
+    await backend.close();
+  }
+
+  const sql = createPostgresClient({ connectionString: config.connectionString });
+  try {
+    for (const table of listPostgresTables(config)) {
+      try {
+        await sql.unsafe(`select 1 from ${qualifiedTable(config.schema, table)} limit 1`);
+        checks.push({
+          name: `table:${config.schema}.${table}`,
+          ok: true,
+          detail: "reachable",
+        });
+      } catch (error) {
+        checks.push({
+          name: `table:${config.schema}.${table}`,
+          ok: false,
+          detail: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+  } finally {
+    await sql.end?.({ timeout: 0 });
+  }
+
+  const assetDir = path.resolve(config.assetDataDir);
+  try {
+    await ensureDirectoryReady(assetDir);
+    checks.push({
+      name: `assetDir:${assetDir}`,
+      ok: true,
+      detail: "read/write ok",
+    });
+  } catch (error) {
+    checks.push({
+      name: `assetDir:${assetDir}`,
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  return checks;
+}
+
 export function buildSupabaseSetupSql(config: ResolvedSupabaseCliConfig): string {
-  const schemaName = quoteIdentifier(config.schema);
-  const conversations = qualifiedTable(config.schema, `${config.tablePrefix}conversations`);
-  const events = qualifiedTable(config.schema, `${config.tablePrefix}conversation_events`);
-  const inputHistory = qualifiedTable(config.schema, `${config.tablePrefix}input_history`);
-  const usageEntries = qualifiedTable(config.schema, `${config.tablePrefix}usage_entries`);
-  const idempotency = qualifiedTable(config.schema, `${config.tablePrefix}idempotency_records`);
-  const bucketLiteral = quoteLiteral(config.bucket);
+  return [
+    buildPersistenceSetupSql(config.schema, config.tablePrefix),
+    buildSupabaseStorageSetupSql(config.bucket),
+  ].join("\n\n");
+}
+
+export function buildPostgresSetupSql(config: ResolvedPostgresCliConfig): string {
+  return buildPersistenceSetupSql(config.schema, config.tablePrefix);
+}
+
+function buildPersistenceSetupSql(schema: string, tablePrefix: string): string {
+  const schemaName = quoteIdentifier(schema);
+  const conversations = qualifiedTable(schema, `${tablePrefix}conversations`);
+  const events = qualifiedTable(schema, `${tablePrefix}conversation_events`);
+  const inputHistory = qualifiedTable(schema, `${tablePrefix}input_history`);
+  const usageEntries = qualifiedTable(schema, `${tablePrefix}usage_entries`);
+  const idempotency = qualifiedTable(schema, `${tablePrefix}idempotency_records`);
 
   return [
     `create schema if not exists ${schemaName};`,
@@ -278,7 +402,7 @@ export function buildSupabaseSetupSql(config: ResolvedSupabaseCliConfig): string
     "  updated_at timestamptz not null,",
     "  unique (app_name, session_id, agent_scope)",
     ");",
-    `create index if not exists ${quoteIdentifier(`${config.tablePrefix}conversations_app_updated_idx`)}`,
+    `create index if not exists ${quoteIdentifier(`${tablePrefix}conversations_app_updated_idx`)}`,
     `  on ${conversations} (app_name, updated_at desc);`,
     "",
     `create table if not exists ${events} (`,
@@ -289,7 +413,7 @@ export function buildSupabaseSetupSql(config: ResolvedSupabaseCliConfig): string
     "  data jsonb not null,",
     "  created_at timestamptz not null",
     ");",
-    `create index if not exists ${quoteIdentifier(`${config.tablePrefix}conversation_events_conversation_idx`)}`,
+    `create index if not exists ${quoteIdentifier(`${tablePrefix}conversation_events_conversation_idx`)}`,
     `  on ${events} (conversation_id, id);`,
     "",
     `create table if not exists ${inputHistory} (`,
@@ -302,7 +426,7 @@ export function buildSupabaseSetupSql(config: ResolvedSupabaseCliConfig): string
     "  run_id text null,",
     "  created_at timestamptz not null",
     ");",
-    `create index if not exists ${quoteIdentifier(`${config.tablePrefix}input_history_app_created_idx`)}`,
+    `create index if not exists ${quoteIdentifier(`${tablePrefix}input_history_app_created_idx`)}`,
     `  on ${inputHistory} (app_name, created_at desc);`,
     "",
     `create table if not exists ${usageEntries} (`,
@@ -316,7 +440,7 @@ export function buildSupabaseSetupSql(config: ResolvedSupabaseCliConfig): string
     "  run_id text null,",
     "  created_at timestamptz not null",
     ");",
-    `create index if not exists ${quoteIdentifier(`${config.tablePrefix}usage_entries_app_created_idx`)}`,
+    `create index if not exists ${quoteIdentifier(`${tablePrefix}usage_entries_app_created_idx`)}`,
     `  on ${usageEntries} (app_name, created_at desc);`,
     "",
     `create table if not exists ${idempotency} (`,
@@ -331,7 +455,12 @@ export function buildSupabaseSetupSql(config: ResolvedSupabaseCliConfig): string
     "  created_at timestamptz not null,",
     "  unique (app_name, idempotency_key)",
     ");",
-    "",
+  ].join("\n");
+}
+
+function buildSupabaseStorageSetupSql(bucket: string): string {
+  const bucketLiteral = quoteLiteral(bucket);
+  return [
     "create schema if not exists storage;",
     "insert into storage.buckets (id, name, public)",
     `select ${bucketLiteral}, ${bucketLiteral}, false`,

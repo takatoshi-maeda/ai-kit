@@ -4,7 +4,9 @@ import { SupabasePersistence } from "../../agent/persistence/supabase.js";
 import type { DoctorCommandOptions, DoctorReport } from "../shared.js";
 import {
   formatDoctorReport,
+  inspectPostgresResources,
   inspectSupabaseResources,
+  resolvePostgresConfig,
   resolveCliPersistence,
   resolveFilesystemDataDir,
   resolveSupabaseConfig,
@@ -39,6 +41,23 @@ export async function collectDoctorReport(options: DoctorCommandOptions): Promis
     };
   }
 
+  if (persistence.kind === "postgres") {
+    const config = resolvePostgresConfig(persistence, options, options.cwd);
+    const checks = await inspectPostgresResources(config);
+
+    return {
+      ok: checks.every((check) => check.ok),
+      backend: "postgres",
+      config: {
+        connectionString: redactConnectionString(config.connectionString),
+        schema: config.schema,
+        tablePrefix: config.tablePrefix,
+        assetDataDir: config.assetDataDir,
+      },
+      checks,
+    };
+  }
+
   const config = resolveSupabaseConfig(persistence, options);
   const backend = new SupabasePersistence({
     appName: "ai-kit-doctor",
@@ -66,4 +85,16 @@ export async function collectDoctorReport(options: DoctorCommandOptions): Promis
     },
     checks,
   };
+}
+
+function redactConnectionString(connectionString: string): string {
+  try {
+    const parsed = new URL(connectionString);
+    if (parsed.password) {
+      parsed.password = "***";
+    }
+    return parsed.toString();
+  } catch {
+    return "<invalid>";
+  }
 }
