@@ -45,6 +45,7 @@ export interface AgentGroupAgentDefinition {
 }
 
 export interface AgentGroupDefinition {
+  /** Current app-level HTTP mount name. Later phases will rename this to appName. */
   mountName: string;
   description?: string;
   agents: AgentGroupAgentDefinition[];
@@ -52,6 +53,7 @@ export interface AgentGroupDefinition {
 }
 
 export interface AgentMountDefinition {
+  /** Current app-level HTTP mount name. Later phases will rename this to appName. */
   mountName: string;
   description?: string;
 }

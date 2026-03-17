@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -68,6 +68,32 @@ describe("conversations tools", () => {
       expect(parsed.sessions[0]).toHaveProperty("latestUserMessage");
       expect(parsed.sessions[0]).toHaveProperty("latestUserContent");
     });
+
+    it("returns sessions ordered by updatedAt descending", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-03-04T10:00:00Z"));
+        await persistence.appendConversationTurn("s1", { ...makeTurn(), agentId: "front-desk" }, "Chat 1");
+
+        vi.setSystemTime(new Date("2026-03-04T10:05:00Z"));
+        await persistence.appendConversationTurn("s2", { ...makeTurn("Later"), agentId: "front-desk" }, "Chat 2");
+
+        vi.setSystemTime(new Date("2026-03-04T10:10:00Z"));
+        await persistence.appendConversationTurn(
+          "s1",
+          { ...makeTurn("Newest"), turnId: "turn-2", runId: "run-2", agentId: "front-desk" },
+        );
+
+        const result = await handleConversationsList(persistence, {});
+        const parsed = JSON.parse(result.content[0].text);
+
+        expect(parsed.sessions.map((session: { sessionId: string }) => session.sessionId)).toEqual(["s1", "s2"]);
+        expect(parsed.sessions[0].updatedAt).toBe("2026-03-04T10:10:00.000Z");
+        expect(parsed.sessions[1].updatedAt).toBe("2026-03-04T10:05:00.000Z");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 
   describe("handleConversationsGet", () => {
@@ -136,6 +162,47 @@ describe("conversations tools", () => {
       ]);
       expect(parsed.turns[0].userMessage).toBe(
         "[image:url:http://127.0.0.1:3290/api/mcp/codefleet/public/uploads/2026/03/04/s1/test.png] check",
+      );
+    });
+
+    it("converts in-progress stored image paths to public URLs when called from HTTP transport", async () => {
+      const userContent = [
+        { type: "image", source: { type: "url", url: "uploads/2026/03/04/s1/in-progress.png" } },
+      ] as const;
+      await persistence.appendRunState("s1", {
+        runId: "run-1",
+        turnId: "turn-1",
+        status: "started",
+        startedAt: "2026-03-04T00:00:00.000Z",
+        updatedAt: "2026-03-04T00:01:00.000Z",
+        userMessage: "[image:url:uploads/2026/03/04/s1/in-progress.png] check",
+        userContent: [...userContent],
+        agentId: "front-desk",
+      });
+
+      const result = await handleConversationsGet(
+        persistence,
+        {
+          sessionId: "s1",
+          agentId: "front-desk",
+          _httpTransport: true,
+          _publicBaseUrl: "http://127.0.0.1:3290/api/mcp/codefleet/public",
+        },
+        { publicAssetsBasePath: "/api/mcp/codefleet/public" },
+      );
+      const parsed = JSON.parse(result.content[0].text);
+
+      expect(parsed.inProgress.userContent).toEqual([
+        {
+          type: "image",
+          source: {
+            type: "url",
+            url: "http://127.0.0.1:3290/api/mcp/codefleet/public/uploads/2026/03/04/s1/in-progress.png",
+          },
+        },
+      ]);
+      expect(parsed.inProgress.userMessage).toBe(
+        "[image:url:http://127.0.0.1:3290/api/mcp/codefleet/public/uploads/2026/03/04/s1/in-progress.png] check",
       );
     });
 

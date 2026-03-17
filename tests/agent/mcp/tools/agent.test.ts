@@ -430,6 +430,85 @@ describe("agent tools", () => {
       }
     });
 
+    it("falls back to an agentId-based public asset base path when none is provided", async () => {
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-fallback-public-"));
+      const capturedInputs: Array<string | ContentPart[]> = [];
+      function captureAgent(ctx: AgentContext): ConversationalAgent {
+        const client: LLMClient = {
+          model: "test-model",
+          provider: "openai",
+          capabilities: defaultCapabilities,
+          async invoke() {
+            throw new Error("invoke should not be called");
+          },
+          async *stream(input) {
+            let userMessage = input.messages[0];
+            for (let index = input.messages.length - 1; index >= 0; index -= 1) {
+              if (input.messages[index]?.role === "user") {
+                userMessage = input.messages[index];
+                break;
+              }
+            }
+            capturedInputs.push(userMessage?.content ?? "");
+            yield {
+              type: "response.completed",
+              result: makeResult("converted via fallback"),
+            };
+          },
+          estimateTokens: () => 10,
+        };
+        return new ConversationalAgent({
+          context: ctx,
+          client,
+          instructions: "Capture agent",
+        });
+      }
+
+      const registry = new AgentRegistry({
+        agents: [{ create: captureAgent, agentId: "test" }],
+      });
+      const persistence = stubPersistence();
+      const deps: AgentToolDeps = {
+        registry,
+        persistence,
+        publicAssetsDir: path.join(tempDir, "public"),
+      };
+      const pngBase64 =
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO2Nm7cAAAAASUVORK5CYII=";
+      const relativePath = "uploads/2026/03/04/sess-public/local.png";
+      await fs.mkdir(path.join(tempDir, "public", "uploads/2026/03/04/sess-public"), { recursive: true });
+      await fs.writeFile(path.join(tempDir, "public", relativePath), Buffer.from(pngBase64, "base64"));
+      const publicUrl = `/api/mcp/test/public/${relativePath}`;
+      const input: ContentPart[] = [
+        {
+          type: "image",
+          source: {
+            type: "url",
+            url: publicUrl,
+          },
+        },
+      ];
+
+      try {
+        await handleAgentRun(deps, { agentId: "test", input, sessionId: "sess-public" });
+
+        const llmInput = capturedInputs[0];
+        expect(Array.isArray(llmInput)).toBe(true);
+        if (Array.isArray(llmInput) && llmInput[0]?.type === "image" && llmInput[0].source.type === "url") {
+          expect(llmInput[0].source.url).toContain("data:image/png;base64,");
+        }
+
+        const appendTurnCall = (persistence.appendConversationTurn as ReturnType<typeof vi.fn>).mock.calls[0];
+        const persistedTurn = appendTurnCall?.[1] as { userContent?: ContentPart[] } | undefined;
+        expect(persistedTurn?.userContent?.[0]).toEqual({
+          type: "image",
+          source: { type: "url", url: publicUrl },
+        });
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
     it("rejects base64 image payloads larger than the per-turn limit", async () => {
       const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-limit-"));
       const registry = new AgentRegistry({

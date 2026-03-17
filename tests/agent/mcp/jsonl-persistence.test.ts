@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import * as os from "node:os";
@@ -145,6 +145,30 @@ describe("JsonlMcpPersistence", () => {
       expect(summaries).toHaveLength(2);
     });
 
+    it("orders conversation summaries by updatedAt descending", async () => {
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-03-04T10:00:00Z"));
+        await persistence.appendConversationTurn("sess-1", makeTurn({ agentId: "front-desk" }), "First");
+
+        vi.setSystemTime(new Date("2026-03-04T10:05:00Z"));
+        await persistence.appendConversationTurn("sess-2", makeTurn({ agentId: "front-desk" }), "Second");
+
+        vi.setSystemTime(new Date("2026-03-04T10:10:00Z"));
+        await persistence.appendConversationTurn(
+          "sess-1",
+          makeTurn({ turnId: "turn-2", runId: "run-2", agentId: "front-desk", userMessage: "Updated first" }),
+        );
+
+        const summaries = await persistence.listConversationSummaries();
+        expect(summaries.map((summary) => summary.sessionId)).toEqual(["sess-1", "sess-2"]);
+        expect(summaries[0]?.updatedAt).toBe("2026-03-04T10:10:00.000Z");
+        expect(summaries[1]?.updatedAt).toBe("2026-03-04T10:05:00.000Z");
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
     it("deletes a conversation", async () => {
       await persistence.appendConversationTurn("sess-1", makeTurn({ agentId: "front-desk" }));
 
@@ -207,6 +231,25 @@ describe("JsonlMcpPersistence", () => {
       expect(summary!.period).toBe("2025-02");
     });
 
+    it("returns zero totals when the requested period has no matching entries", async () => {
+      const storage = new FileSystemStorage(tmpDir);
+      const jan = JSON.stringify({
+        amount: 0.1,
+        currency: "usd",
+        timestamp: "2025-01-15T00:00:00Z",
+      });
+      await storage.appendText("usage.jsonl", jan + "\n");
+
+      const summary = await persistence.summarizeUsage("2025-03");
+      expect(summary).toEqual({
+        period: "2025-03",
+        cost: {
+          totalUsd: 0,
+          totalByCurrency: {},
+        },
+      });
+    });
+
     it("returns null when no usage data", async () => {
       const summary = await persistence.summarizeUsage();
       expect(summary).toBeNull();
@@ -235,6 +278,28 @@ describe("JsonlMcpPersistence", () => {
     it("returns null for nonexistent record", async () => {
       const result = await persistence.readIdempotencyRecord("nope");
       expect(result).toBeNull();
+    });
+
+    it("looks up idempotency records by key even when sessionId or agentId differ", async () => {
+      const record: IdempotencyRecord = {
+        idempotencyKey: "key-1",
+        sessionId: "sess-1",
+        runId: "run-1",
+        status: "success",
+        result: { message: "done" },
+        agentId: "front-desk",
+        createdAt: new Date().toISOString(),
+      };
+
+      await persistence.writeIdempotencyRecord(record);
+
+      const read = await persistence.readIdempotencyRecord(
+        "key-1",
+        "different-session",
+        "different-agent",
+      );
+
+      expect(read).toEqual(record);
     });
   });
 
