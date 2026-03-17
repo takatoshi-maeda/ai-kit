@@ -1,8 +1,12 @@
 import { buildMcpServer } from "../agent/mcp/server.js";
 import { AgentRegistry } from "../agent/mcp/agent-registry.js";
-import { JsonlMcpPersistence } from "../agent/mcp/jsonl-persistence.js";
 import type { McpPersistence } from "../agent/mcp/persistence.js";
-import { FileSystemStorage } from "../storage/fs.js";
+import {
+  createPersistenceBundle,
+  type PersistenceBackendOptions,
+} from "../agent/persistence/factory.js";
+import type { PublicAssetStorage } from "../agent/public-assets/storage.js";
+import { resolveAiKitOptions } from "../config/resolver.js";
 import type { AgentContext } from "../types/agent.js";
 import type { ConversationalAgent } from "../agent/conversational.js";
 import type { McpServer as SdkMcpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
@@ -62,6 +66,8 @@ export interface AgentMount {
   definition: AgentMountDefinition;
   mcpServer: SdkMcpServer;
   persistence: McpPersistence;
+  publicAssetStorage: PublicAssetStorage;
+  publicAssetsDir?: string;
   registry: AgentRegistry;
   transport: McpInProcessTransport;
 }
@@ -71,6 +77,8 @@ export interface MountMcpRoutesOptions {
   agentGroups?: AgentGroupDefinition[];
   dataDir?: string;
   basePath?: string;
+  persistence?: PersistenceBackendOptions;
+  configFile?: string | false;
   /**
    * Hook invoked right after each mount object is created and before the MCP
    * server connects to transport. This allows callers to register custom tools
@@ -98,14 +106,14 @@ export async function mountMcpRoutes(
   app: MountableHonoApp,
   options: MountMcpRoutesOptions,
 ): Promise<Map<string, AgentMount>> {
-  const basePath = options.basePath ?? "/api/mcp";
-  const dataDir = options.dataDir ?? "data";
-  const definitions = normalizeAgentGroups(options);
+  const resolvedOptions = await resolveAiKitOptions(options);
+  const basePath = resolvedOptions.basePath ?? "/api/mcp";
+  const definitions = normalizeAgentGroups(resolvedOptions);
   const mounts = await initAgentMounts(
     definitions,
-    dataDir,
+    resolvedOptions,
     basePath,
-    options.onMountCreated,
+    resolvedOptions.onMountCreated,
   );
   const startedAt = Date.now();
 
@@ -129,15 +137,20 @@ export async function mountMcpRoutes(
 
   app.get(`${basePath}/:agent_name/public/*`, async (c) => {
     const mountName = c.req.param("agent_name") ?? "";
+    const mount = mounts.get(mountName);
     const routePrefix = `${basePath.replace(/\/+$/, "")}/${mountName}/public/`;
     const requested = c.req.path.startsWith(routePrefix)
       ? c.req.path.slice(routePrefix.length)
       : "";
-    if (!mountName || requested.length === 0) {
+    if (!mountName || !mount || requested.length === 0) {
       return c.json({ error: "not found" }, 404);
     }
 
-    const resolved = resolvePublicAssetFilePath(dataDir, mountName, requested);
+    if (!mount.publicAssetsDir) {
+      return c.json({ error: "not found" }, 404);
+    }
+
+    const resolved = resolvePublicAssetFilePath(mount.publicAssetsDir, requested);
     if (!resolved.ok) {
       return c.json({ error: resolved.error }, 400);
     }
@@ -422,15 +435,17 @@ function normalizeAgentGroups(
 
 async function initAgentMounts(
   definitions: AgentGroupDefinition[],
-  dataDir: string,
+  options: MountMcpRoutesOptions,
   basePath: string,
   onMountCreated?: (mount: AgentMount) => Promise<void> | void,
 ): Promise<Map<string, AgentMount>> {
   const mounts = new Map<string, AgentMount>();
 
   for (const definition of definitions) {
-    const storage = new FileSystemStorage(`${dataDir}/${definition.mountName}`);
-    const persistence = new JsonlMcpPersistence(storage);
+    const bundle = await createPersistenceBundle(definition.mountName, {
+      persistence: options.persistence ?? { kind: "filesystem", dataDir: "data" },
+    });
+    const persistence = bundle.persistence;
     const registry = new AgentRegistry({
       agents: definition.agents.map((agent) => ({
         agentId: agent.agentId,
@@ -444,7 +459,7 @@ async function initAgentMounts(
       serverName: definition.mountName,
       persistence,
       agentRegistry: registry,
-      publicAssetsDir: `${dataDir}/${definition.mountName}/public`,
+      publicAssetsDir: bundle.publicAssetsDir,
       publicAssetsBasePath: `${basePath.replace(/\/+$/, "")}/${definition.mountName}/public`,
     });
 
@@ -456,6 +471,8 @@ async function initAgentMounts(
       },
       mcpServer,
       persistence,
+      publicAssetStorage: bundle.publicAssetStorage,
+      publicAssetsDir: bundle.publicAssetsDir,
       registry,
       transport,
     };
@@ -660,8 +677,7 @@ function resolvePublicBaseUrl(
 }
 
 function resolvePublicAssetFilePath(
-  dataDir: string,
-  agentName: string,
+  publicAssetsDir: string,
   requestedPath: string,
 ): { ok: true; fullPath: string } | { ok: false; error: string } {
   if (requestedPath.includes("\0")) {
@@ -678,8 +694,8 @@ function resolvePublicAssetFilePath(
     return { ok: false, error: "invalid path" };
   }
 
-  // Always anchor under the mounted agent's public root to block traversal.
-  const publicRoot = path.resolve(dataDir, agentName, "public");
+  // Always anchor under the mounted app's public root to block traversal.
+  const publicRoot = path.resolve(publicAssetsDir);
   const fullPath = path.resolve(publicRoot, ...resolvedSegments);
   if (
     fullPath !== publicRoot &&

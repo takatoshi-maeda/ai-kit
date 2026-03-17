@@ -193,6 +193,7 @@ export {
   AgentRegistry,
   JsonlMcpPersistence,
   FilesystemPersistence,
+  createPersistenceBundle,
   FileSystemPublicAssetStorage,
 } from "./agent/index.js";
 export type {
@@ -200,8 +201,12 @@ export type {
   McpServerOptions,
   AgentEntry,
   AgentRegistryOptions,
+  CreatePersistenceBundleOptions,
   AgentPersistence,
+  FileSystemBackend,
   McpPersistence,
+  PersistenceBackendOptions,
+  PersistenceBundle,
   Conversation,
   ConversationSummary,
   ConversationTurn,
@@ -209,6 +214,7 @@ export type {
   McpUsageSummary,
   IdempotencyRecord,
   RunState,
+  SupabaseBackend,
   PublicAssetReadResult,
   PublicAssetResolution,
   PublicAssetStorage,
@@ -218,3 +224,14 @@ export type {
   AgentRunResult,
   McpStreamNotification,
 } from "./agent/index.js";
+
+// Config
+export type {
+  AiKitConfig,
+  LoadAiKitConfigOptions,
+  ResolvedAiKitOptions,
+} from "./config/index.js";
+export {
+  loadAiKitConfig,
+  resolveAiKitOptions,
+} from "./config/index.js";
