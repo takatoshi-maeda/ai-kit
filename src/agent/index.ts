@@ -53,12 +53,20 @@ export { AgentStreamForwarder } from "./stream/index.js";
 export type { AgentStreamForwarderOptions } from "./stream/index.js";
 
 // MCP
-export { createMcpServer, buildMcpServer, AgentRegistry, JsonlMcpPersistence } from "./mcp/index.js";
+export {
+  createMcpServer,
+  buildMcpServer,
+  AgentRegistry,
+  JsonlMcpPersistence,
+  FilesystemPersistence,
+  FileSystemPublicAssetStorage,
+} from "./mcp/index.js";
 export type {
   CreateMcpServerOptions,
   McpServerOptions,
   AgentEntry,
   AgentRegistryOptions,
+  AgentPersistence,
   McpPersistence,
   Conversation,
   ConversationSummary,
@@ -67,6 +75,11 @@ export type {
   McpUsageSummary,
   IdempotencyRecord,
   RunState,
+  PublicAssetReadResult,
+  PublicAssetResolution,
+  PublicAssetStorage,
+  SavePublicImageInput,
+  SavePublicImageResult,
   AgentRunParams,
   AgentRunResult,
   McpStreamNotification,

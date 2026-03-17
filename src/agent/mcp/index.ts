@@ -9,7 +9,10 @@ import { buildMcpServer } from "./server.js";
 export { AgentRegistry } from "./agent-registry.js";
 export type { AgentEntry, AgentRegistryOptions } from "./agent-registry.js";
 export { JsonlMcpPersistence } from "./jsonl-persistence.js";
+export { FilesystemPersistence } from "../persistence/filesystem.js";
+export { FileSystemPublicAssetStorage } from "../public-assets/filesystem.js";
 export type {
+  AgentPersistence,
   McpPersistence,
   Conversation,
   ConversationSummary,
@@ -19,6 +22,13 @@ export type {
   IdempotencyRecord,
   RunState,
 } from "./persistence.js";
+export type {
+  PublicAssetReadResult,
+  PublicAssetResolution,
+  PublicAssetStorage,
+  SavePublicImageInput,
+  SavePublicImageResult,
+} from "../public-assets/storage.js";
 export type {
   AgentRunParams,
   AgentRunResult,

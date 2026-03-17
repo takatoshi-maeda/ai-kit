@@ -187,12 +187,20 @@ export type { TemplateEngine, PromptLoaderOptions } from "./prompt/index.js";
 export { PromptLoader, MarkdownPromptLoader } from "./prompt/index.js";
 
 // MCP
-export { createMcpServer, buildMcpServer, AgentRegistry, JsonlMcpPersistence } from "./agent/index.js";
+export {
+  createMcpServer,
+  buildMcpServer,
+  AgentRegistry,
+  JsonlMcpPersistence,
+  FilesystemPersistence,
+  FileSystemPublicAssetStorage,
+} from "./agent/index.js";
 export type {
   CreateMcpServerOptions,
   McpServerOptions,
   AgentEntry,
   AgentRegistryOptions,
+  AgentPersistence,
   McpPersistence,
   Conversation,
   ConversationSummary,
@@ -201,6 +209,11 @@ export type {
   McpUsageSummary,
   IdempotencyRecord,
   RunState,
+  PublicAssetReadResult,
+  PublicAssetResolution,
+  PublicAssetStorage,
+  SavePublicImageInput,
+  SavePublicImageResult,
   AgentRunParams,
   AgentRunResult,
   McpStreamNotification,
