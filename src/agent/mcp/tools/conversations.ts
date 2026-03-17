@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { McpPersistence } from "../persistence.js";
+import { fromFileSystemAssetRef } from "../../public-assets/filesystem.js";
 
 export const ConversationsListParamsSchema = z.object({
   limit: z.number().optional().describe("Maximum number of conversations to return"),
@@ -57,7 +58,7 @@ export async function handleConversationsList(
 export async function handleConversationsGet(
   persistence: McpPersistence,
   params: z.infer<typeof ConversationsGetParamsSchema>,
-  options?: { publicAssetsBasePath?: string },
+  options?: { appName?: string; publicAssetsBasePath?: string },
 ): Promise<{
   content: Array<{ type: "text"; text: string }>;
   structuredContent?: Record<string, unknown>;
@@ -79,6 +80,7 @@ export async function handleConversationsGet(
     };
   }
   const payload = formatConversationForWire(conversation, {
+    appName: options?.appName,
     usePublicUrl: params._httpTransport === true,
     publicAssetsBasePath: params._publicBaseUrl ?? options?.publicAssetsBasePath,
   });
@@ -114,6 +116,7 @@ function formatConversationForWire(
     ? Exclude<T, null>
     : never,
   options: {
+    appName?: string;
     usePublicUrl: boolean;
     publicAssetsBasePath?: string;
   },
@@ -141,7 +144,11 @@ function formatConversationForWire(
       if (!source || source.type !== "url" || typeof source.url !== "string") {
         return part;
       }
-      const publicUrl = toPublicAssetUrl(source.url, options.publicAssetsBasePath);
+      const publicUrl = toPublicAssetUrl(
+        source.url,
+        options.publicAssetsBasePath,
+        options.appName,
+      );
       if (!publicUrl) {
         return part;
       }
@@ -159,7 +166,11 @@ function formatConversationForWire(
       return message;
     }
     return message.replace(/\[image:url:([^\]]+)\]/g, (_full, rawUrl: string) => {
-      const converted = toPublicAssetUrl(rawUrl, options.publicAssetsBasePath);
+      const converted = toPublicAssetUrl(
+        rawUrl,
+        options.publicAssetsBasePath,
+        options.appName,
+      );
       return converted ? `[image:url:${converted}]` : `[image:url:${rawUrl}]`;
     });
   };
@@ -208,13 +219,29 @@ function formatConversationForWire(
   };
 }
 
-function toPublicAssetUrl(storedPath: string, publicAssetsBasePath?: string): string | null {
-  if (!/^uploads\/[^?#]+$/.test(storedPath)) {
-    return null;
-  }
+function toPublicAssetUrl(
+  storedPath: string,
+  publicAssetsBasePath?: string,
+  appName?: string,
+): string | null {
   const basePath = (publicAssetsBasePath ?? "").replace(/\/+$/, "");
   if (!basePath) {
     return null;
   }
-  return `${basePath}/${storedPath}`;
+  if (/^uploads\/[^?#]+$/.test(storedPath)) {
+    return `${basePath}/${storedPath}`;
+  }
+
+  const relativePath =
+    fromFileSystemAssetRef(storedPath, appName) ??
+    fromFileSystemAssetRef(storedPath);
+  if (relativePath) {
+    return `${basePath}/${relativePath}`;
+  }
+
+  if (/^storage\+[A-Za-z0-9+.-]+:/.test(storedPath)) {
+    return `${basePath}/ref/${encodeURIComponent(storedPath)}`;
+  }
+
+  return null;
 }

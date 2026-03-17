@@ -10,6 +10,10 @@ import { JsonlMcpPersistence } from "../../../../src/agent/mcp/jsonl-persistence
 import { handleConversationsGet } from "../../../../src/agent/mcp/tools/conversations.js";
 import { ConversationalAgent } from "../../../../src/agent/conversational.js";
 import type { McpPersistence } from "../../../../src/agent/mcp/persistence.js";
+import {
+  FileSystemPublicAssetStorage,
+  fromFileSystemAssetRef,
+} from "../../../../src/agent/public-assets/filesystem.js";
 import { FileSystemStorage } from "../../../../src/storage/fs.js";
 import type { AgentContext, ConversationHistory } from "../../../../src/types/agent.js";
 import type { LLMClient } from "../../../../src/types/agent.js";
@@ -257,13 +261,20 @@ describe("agent tools", () => {
 
     it("normalizes base64 image content to public URL and persists normalized content", async () => {
       const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-run-"));
+      const publicAssetStorage = new FileSystemPublicAssetStorage({
+        appName: "test",
+        publicDir: path.join(tempDir, "public"),
+      });
+      const saveImageSpy = vi.spyOn(publicAssetStorage, "saveImage");
       const registry = new AgentRegistry({
         agents: [{ create: createTestAgent, agentId: "test" }],
       });
       const persistence = stubPersistence();
       const deps: AgentToolDeps = {
+        appName: "test",
         registry,
         persistence,
+        publicAssetStorage,
         publicAssetsDir: path.join(tempDir, "public"),
         publicAssetsBasePath: "/api/mcp/test/public",
       };
@@ -287,6 +298,7 @@ describe("agent tools", () => {
         const appendTurnCall = (persistence.appendConversationTurn as ReturnType<typeof vi.fn>).mock.calls[0];
         const persistedTurn = appendTurnCall?.[1] as { userContent?: ContentPart[]; userMessage?: string } | undefined;
         expect(Array.isArray(persistedTurn?.userContent)).toBe(true);
+        expect(saveImageSpy).toHaveBeenCalledTimes(1);
 
         const imagePart = persistedTurn?.userContent?.[0];
         expect(imagePart?.type).toBe("image");
@@ -294,14 +306,18 @@ describe("agent tools", () => {
           expect(imagePart.source.type).toBe("url");
           if (imagePart.source.type === "url") {
             expect(imagePart.source.url).toMatch(
+              /^storage\+file:\/\/\/test\/public\/uploads\/\d{4}\/\d{2}\/\d{2}\/sess-base64\/[0-9a-f-]+\.png$/,
+            );
+            const relativePath = fromFileSystemAssetRef(imagePart.source.url, "test");
+            expect(relativePath).toMatch(
               /^uploads\/\d{4}\/\d{2}\/\d{2}\/sess-base64\/[0-9a-f-]+\.png$/,
             );
-            const fullPath = path.join(tempDir, "public", imagePart.source.url);
+            const fullPath = path.join(tempDir, "public", relativePath ?? "");
             const saved = await fs.readFile(fullPath);
             expect(saved.length).toBeGreaterThan(0);
           }
         }
-        expect(persistedTurn?.userMessage).toContain("[image:url:uploads/");
+        expect(persistedTurn?.userMessage).toContain("[image:url:storage+file:///");
       } finally {
         await fs.rm(tempDir, { recursive: true, force: true });
       }
@@ -309,13 +325,19 @@ describe("agent tools", () => {
 
     it("normalizes image data URL input to public URL", async () => {
       const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-dataurl-"));
+      const publicAssetStorage = new FileSystemPublicAssetStorage({
+        appName: "test",
+        publicDir: path.join(tempDir, "public"),
+      });
       const registry = new AgentRegistry({
         agents: [{ create: createTestAgent, agentId: "test" }],
       });
       const persistence = stubPersistence();
       const deps: AgentToolDeps = {
+        appName: "test",
         registry,
         persistence,
+        publicAssetStorage,
         publicAssetsDir: path.join(tempDir, "public"),
         publicAssetsBasePath: "/api/mcp/test/public",
       };
@@ -341,7 +363,7 @@ describe("agent tools", () => {
         expect(imagePart?.type).toBe("image");
         if (imagePart?.type === "image" && imagePart.source.type === "url") {
           expect(imagePart.source.url).toMatch(
-            /^uploads\/\d{4}\/\d{2}\/\d{2}\/sess-data-url\/[0-9a-f-]+\.png$/,
+            /^storage\+file:\/\/\/test\/public\/uploads\/\d{4}\/\d{2}\/\d{2}\/sess-data-url\/[0-9a-f-]+\.png$/,
           );
         }
       } finally {
@@ -387,9 +409,15 @@ describe("agent tools", () => {
         agents: [{ create: captureAgent, agentId: "test" }],
       });
       const persistence = stubPersistence();
+      const publicAssetStorage = new FileSystemPublicAssetStorage({
+        appName: "test",
+        publicDir: path.join(tempDir, "public"),
+      });
       const deps: AgentToolDeps = {
+        appName: "test",
         registry,
         persistence,
+        publicAssetStorage,
         publicAssetsDir: path.join(tempDir, "public"),
         publicAssetsBasePath: "/api/mcp/test/public",
       };
@@ -430,7 +458,7 @@ describe("agent tools", () => {
       }
     });
 
-    it("falls back to an agentId-based public asset base path when none is provided", async () => {
+    it("falls back to an appName-based public asset base path when none is provided", async () => {
       const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-fallback-public-"));
       const capturedInputs: Array<string | ContentPart[]> = [];
       function captureAgent(ctx: AgentContext): ConversationalAgent {
@@ -468,9 +496,15 @@ describe("agent tools", () => {
         agents: [{ create: captureAgent, agentId: "test" }],
       });
       const persistence = stubPersistence();
+      const publicAssetStorage = new FileSystemPublicAssetStorage({
+        appName: "test",
+        publicDir: path.join(tempDir, "public"),
+      });
       const deps: AgentToolDeps = {
+        appName: "test",
         registry,
         persistence,
+        publicAssetStorage,
         publicAssetsDir: path.join(tempDir, "public"),
       };
       const pngBase64 =
@@ -515,9 +549,15 @@ describe("agent tools", () => {
         agents: [{ create: createTestAgent, agentId: "test" }],
       });
       const persistence = stubPersistence();
+      const publicAssetStorage = new FileSystemPublicAssetStorage({
+        appName: "test",
+        publicDir: path.join(tempDir, "public"),
+      });
       const deps: AgentToolDeps = {
+        appName: "test",
         registry,
         persistence,
+        publicAssetStorage,
         publicAssetsDir: path.join(tempDir, "public"),
         publicAssetsBasePath: "/api/mcp/test/public",
       };
@@ -550,9 +590,15 @@ describe("agent tools", () => {
         agents: [{ create: createTestAgent, agentId: "test" }],
       });
       const persistence = stubPersistence();
+      const publicAssetStorage = new FileSystemPublicAssetStorage({
+        appName: "test",
+        publicDir: path.join(tempDir, "public"),
+      });
       const deps: AgentToolDeps = {
+        appName: "test",
         registry,
         persistence,
+        publicAssetStorage,
         publicAssetsDir: path.join(tempDir, "public"),
         publicAssetsBasePath: "/api/mcp/test/public",
       };

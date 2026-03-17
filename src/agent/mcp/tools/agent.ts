@@ -1,10 +1,13 @@
 import { z } from "zod";
-import * as fs from "node:fs/promises";
-import * as path from "node:path";
 import type { AgentRegistry } from "../agent-registry.js";
 import type { McpPersistence, ConversationTurn, TimelineItem } from "../persistence.js";
 import { AgentContextImpl } from "../../context.js";
 import { InMemoryHistory } from "../../conversation/memory-history.js";
+import {
+  FileSystemPublicAssetStorage,
+  toFileSystemAssetRef,
+} from "../../public-assets/filesystem.js";
+import type { PublicAssetStorage } from "../../public-assets/storage.js";
 import type { LLMStreamEvent } from "../../../types/stream-events.js";
 import type { ContentPart } from "../../../types/llm.js";
 
@@ -114,6 +117,8 @@ export interface AgentToolDeps {
   registry: AgentRegistry;
   persistence: McpPersistence;
   sendNotification?: (method: string, params: Record<string, unknown>) => Promise<void>;
+  appName?: string;
+  publicAssetStorage?: PublicAssetStorage;
   publicAssetsDir?: string;
   publicAssetsBasePath?: string;
 }
@@ -125,13 +130,6 @@ const IMAGE_MEDIA_TYPE_TO_EXTENSION: Record<string, string> = {
   "image/jpeg": "jpg",
   "image/gif": "gif",
   "image/webp": "webp",
-};
-const IMAGE_EXTENSION_TO_MEDIA_TYPE: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  gif: "image/gif",
-  webp: "image/webp",
 };
 
 export async function handleAgentList(
@@ -180,6 +178,11 @@ export async function handleAgentRun(
   const runId = crypto.randomUUID();
   const turnId = crypto.randomUUID();
   const resolvedUserInput = resolveUserInput(input, message);
+  const publicAssetsBasePath =
+    deps.publicAssetsBasePath ??
+    (deps.appName
+      ? `/api/mcp/${encodeURIComponent(deps.appName)}/public`
+      : `/api/mcp/${encodeURIComponent(agentId)}/public`);
 
   if (resolvedUserInput === undefined) {
     throw new Error("Either message or input must be provided");
@@ -188,19 +191,19 @@ export async function handleAgentRun(
   const normalized = await normalizeUserInputForPersistence(
     resolvedUserInput,
     {
+      appName: deps.appName,
       sessionId,
+      publicAssetStorage: deps.publicAssetStorage,
       publicAssetsDir: deps.publicAssetsDir,
-      publicAssetsBasePath:
-        deps.publicAssetsBasePath ?? `/api/mcp/${encodeURIComponent(agentId)}/public`,
     },
   );
-  const publicAssetsBasePath =
-    deps.publicAssetsBasePath ?? `/api/mcp/${encodeURIComponent(agentId)}/public`;
   const userInput = normalized.input;
   const userMessagePreview = toUserMessagePreview(normalized.input);
-  // We persist userContent as public URLs, while converting local public asset URLs
-  // to data URLs only for upstream LLM APIs that reject localhost/relative URLs.
+  // Persist internal asset refs while resolving local/public inputs to values
+  // that upstream LLM APIs can actually fetch.
   const llmInput = await normalizeUserInputForLlm(userInput, {
+    appName: deps.appName,
+    publicAssetStorage: deps.publicAssetStorage,
     publicAssetsDir: deps.publicAssetsDir,
     publicAssetsBasePath,
   });
@@ -830,12 +833,15 @@ function toUserMessagePreview(input: string | ContentPart[]): string {
 }
 
 interface NormalizeUserInputOptions {
+  appName?: string;
   sessionId: string;
+  publicAssetStorage?: PublicAssetStorage;
   publicAssetsDir?: string;
-  publicAssetsBasePath: string;
 }
 
 interface NormalizeUserInputForLlmOptions {
+  appName?: string;
+  publicAssetStorage?: PublicAssetStorage;
   publicAssetsDir?: string;
   publicAssetsBasePath: string;
 }
@@ -848,6 +854,7 @@ async function normalizeUserInputForPersistence(
     return { input };
   }
 
+  const publicAssetStorage = resolvePublicAssetStorage(options);
   let totalImageBytes = 0;
   const normalized: ContentPart[] = [];
   for (const part of input) {
@@ -872,8 +879,8 @@ async function normalizeUserInputForPersistence(
       resolvedBase64Data = parsedDataUrl.data;
     }
 
-    if (!options.publicAssetsDir) {
-      throw new Error("base64 image input is not supported without a configured public assets directory");
+    if (!publicAssetStorage) {
+      throw new Error("base64 image input is not supported without a configured public asset storage");
     }
     if (!resolvedMediaType || resolvedBase64Data === null) {
       normalized.push(part);
@@ -896,29 +903,14 @@ async function normalizeUserInputForPersistence(
       throw new Error(`image mediaType does not match binary content: ${mediaType}`);
     }
 
-    const now = new Date();
-    const year = String(now.getUTCFullYear());
-    const month = String(now.getUTCMonth() + 1).padStart(2, "0");
-    const day = String(now.getUTCDate()).padStart(2, "0");
-    const sessionSegment = toSafePathSegment(options.sessionId);
-    const fileName = `${crypto.randomUUID()}.${extension}`;
-
-    const fsPath = path.join(
-      options.publicAssetsDir,
-      "uploads",
-      year,
-      month,
-      day,
-      sessionSegment,
-      fileName,
-    );
-    await fs.mkdir(path.dirname(fsPath), { recursive: true });
-    await fs.writeFile(fsPath, imageBytes);
-
-    const storedFilePath = `uploads/${year}/${month}/${day}/${sessionSegment}/${fileName}`;
+    const saved = await publicAssetStorage.saveImage({
+      sessionId: options.sessionId,
+      mediaType,
+      bytes: imageBytes,
+    });
     normalized.push({
       type: "image",
-      source: { type: "url", url: storedFilePath },
+      source: { type: "url", url: saved.assetRef },
     });
   }
 
@@ -949,6 +941,7 @@ async function normalizeUserInputForLlm(
     return input;
   }
 
+  const publicAssetStorage = resolvePublicAssetStorage(options);
   const normalized: ContentPart[] = [];
   for (const part of input) {
     if (part.type !== "image" || part.source.type !== "url") {
@@ -960,32 +953,27 @@ async function normalizeUserInputForLlm(
       continue;
     }
 
-    const relativePath = resolveStoredImageRelativePath(
+    const assetRef = resolveStoredImageAssetRef(
       part.source.url,
-      options.publicAssetsBasePath,
+      {
+        appName: options.appName,
+        publicAssetsBasePath: options.publicAssetsBasePath,
+      },
     );
-    if (!relativePath) {
+    if (!assetRef) {
       normalized.push(part);
       continue;
     }
-    if (!options.publicAssetsDir) {
-      throw new Error("local public image URL input is not supported without a configured public assets directory");
+    if (!publicAssetStorage) {
+      throw new Error("local public image URL input is not supported without a configured public asset storage");
     }
 
-    const fullPath = resolveSafePublicAssetFilePath(options.publicAssetsDir, relativePath);
-    const extension = path.extname(fullPath).slice(1).toLowerCase();
-    const mediaType = IMAGE_EXTENSION_TO_MEDIA_TYPE[extension];
-    if (!mediaType) {
-      throw new Error(`unsupported image extension for local asset URL: .${extension}`);
-    }
-
-    const bytes = await fs.readFile(fullPath);
-    const dataUrl = `data:${mediaType};base64,${bytes.toString("base64")}`;
+    const resolved = await publicAssetStorage.resolveForLlm({ assetRef });
     normalized.push({
       type: "image",
       source: {
         type: "url",
-        url: dataUrl,
+        url: resolved.mode === "data-url" ? resolved.dataUrl : resolved.url,
       },
     });
   }
@@ -993,16 +981,37 @@ async function normalizeUserInputForLlm(
   return normalized;
 }
 
-function resolveStoredImageRelativePath(url: string, publicAssetsBasePath: string): string | null {
-  if (isStoredAssetPath(url)) {
+function resolveStoredImageAssetRef(
+  url: string,
+  options: {
+    appName?: string;
+    publicAssetsBasePath: string;
+  },
+): string | null {
+  if (isAssetRef(url)) {
     return url;
   }
-  return resolvePublicAssetRelativePath(url, publicAssetsBasePath);
+  if (isStoredAssetPath(url)) {
+    return options.appName ? toFileSystemAssetRef(options.appName, url) : null;
+  }
+
+  const relativePath = resolvePublicAssetRelativePath(url, options.publicAssetsBasePath);
+  if (!relativePath) {
+    return null;
+  }
+  if (relativePath.startsWith("ref/")) {
+    return decodePublicAssetRef(relativePath.slice(4));
+  }
+  return options.appName ? toFileSystemAssetRef(options.appName, relativePath) : null;
 }
 
 function isStoredAssetPath(value: string): boolean {
   // Stored JSONL values use a path-like representation under the public root.
   return /^uploads\/[^?#]+$/.test(value);
+}
+
+function isAssetRef(value: string): boolean {
+  return /^storage\+[A-Za-z0-9+.-]+:/.test(value);
 }
 
 function resolvePublicAssetRelativePath(url: string, publicAssetsBasePath: string): string | null {
@@ -1026,22 +1035,30 @@ function resolvePublicAssetRelativePath(url: string, publicAssetsBasePath: strin
   return parsed.pathname.slice(normalizedBasePath.length + 1);
 }
 
-function resolveSafePublicAssetFilePath(publicAssetsDir: string, relativePath: string): string {
-  const normalized = path.posix.normalize(`/${relativePath}`);
-  const segments = normalized.split("/").filter((segment) => segment.length > 0);
-  if (
-    segments.length === 0 ||
-    segments.some((segment) => segment === "." || segment === "..")
-  ) {
-    throw new Error("invalid local public image URL path");
+function resolvePublicAssetStorage(options: {
+  appName?: string;
+  publicAssetStorage?: PublicAssetStorage;
+  publicAssetsDir?: string;
+}): PublicAssetStorage | null {
+  if (options.publicAssetStorage) {
+    return options.publicAssetStorage;
   }
+  if (options.appName && options.publicAssetsDir) {
+    return new FileSystemPublicAssetStorage({
+      appName: options.appName,
+      publicDir: options.publicAssetsDir,
+    });
+  }
+  return null;
+}
 
-  const root = path.resolve(publicAssetsDir);
-  const fullPath = path.resolve(root, ...segments);
-  if (fullPath !== root && !fullPath.startsWith(`${root}${path.sep}`)) {
-    throw new Error("local public image URL path escapes public directory");
+function decodePublicAssetRef(encodedAssetRef: string): string | null {
+  try {
+    const decoded = decodeURIComponent(encodedAssetRef);
+    return decoded.length > 0 ? decoded : null;
+  } catch {
+    return null;
   }
-  return fullPath;
 }
 
 function isLocalAddress(hostname: string): boolean {
@@ -1065,11 +1082,6 @@ function decodeBase64Data(data: string): Buffer {
     throw new Error("invalid base64 image payload");
   }
   return Buffer.from(normalized, "base64");
-}
-
-function toSafePathSegment(value: string): string {
-  const safe = value.replace(/[^A-Za-z0-9._-]/g, "_");
-  return safe.length > 0 ? safe : "session";
 }
 
 function matchesImageMediaType(bytes: Buffer, mediaType: string): boolean {

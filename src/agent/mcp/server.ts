@@ -2,6 +2,7 @@ import { McpServer as SdkMcpServer } from "@modelcontextprotocol/sdk/server/mcp.
 import { z } from "zod";
 import type { AgentRegistry } from "./agent-registry.js";
 import type { McpPersistence } from "./persistence.js";
+import type { PublicAssetStorage } from "../public-assets/storage.js";
 import {
   AgentRunParamsSchema,
   handleAgentList,
@@ -31,6 +32,10 @@ export interface McpServerOptions {
   agentRegistry?: AgentRegistry;
   /** 永続化バックエンド */
   persistence: McpPersistence;
+  /** HTTP mount / persistence partition name */
+  appName?: string;
+  /** base64 画像や内部 asset ref を解決する公開アセットストレージ */
+  publicAssetStorage?: PublicAssetStorage;
   /** base64 画像を正規化して保存する公開アセット用ディレクトリ */
   publicAssetsDir?: string;
   /** 公開アセット配信用の URL ベースパス */
@@ -46,6 +51,8 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
     serverVersion = "0.1.0",
     agentRegistry,
     persistence,
+    appName,
+    publicAssetStorage,
     publicAssetsDir,
     publicAssetsBasePath,
   } = options;
@@ -73,6 +80,8 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
       const deps: AgentToolDeps = {
         registry: agentRegistry,
         persistence,
+        appName,
+        publicAssetStorage,
         publicAssetsDir,
         publicAssetsBasePath,
         sendNotification: async (method, params) => {
@@ -116,6 +125,7 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
       agentId: resolveConversationAgentId(agentRegistry, parsed.agentId),
       _httpTransport: isHttpTransport,
     }, {
+      appName,
       publicAssetsBasePath,
     });
   });

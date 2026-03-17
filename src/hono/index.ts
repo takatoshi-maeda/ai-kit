@@ -5,6 +5,7 @@ import {
   createPersistenceBundle,
   type PersistenceBackendOptions,
 } from "../agent/persistence/factory.js";
+import { toFileSystemAssetRef } from "../agent/public-assets/filesystem.js";
 import type { PublicAssetStorage } from "../agent/public-assets/storage.js";
 import { resolveAiKitOptions } from "../config/resolver.js";
 import type { AgentContext } from "../types/agent.js";
@@ -12,19 +13,10 @@ import type { ConversationalAgent } from "../agent/conversational.js";
 import type { McpServer as SdkMcpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
-import { promises as fs } from "node:fs";
-import path from "node:path";
 
 const encoder = new TextEncoder();
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 const IMMUTABLE_CACHE_CONTROL = "public, max-age=31536000, immutable";
-const CONTENT_TYPE_BY_EXTENSION: Record<string, string> = {
-  ".png": "image/png",
-  ".jpg": "image/jpeg",
-  ".jpeg": "image/jpeg",
-  ".gif": "image/gif",
-  ".webp": "image/webp",
-};
 
 export type NotificationListener = (message: JSONRPCMessage) => void;
 
@@ -146,33 +138,23 @@ export async function mountMcpRoutes(
       return c.json({ error: "not found" }, 404);
     }
 
-    if (!mount.publicAssetsDir) {
+    const assetRef = resolveRequestedPublicAssetRef(mountName, requested);
+    if (!assetRef) {
       return c.json({ error: "not found" }, 404);
     }
 
-    const resolved = resolvePublicAssetFilePath(mount.publicAssetsDir, requested);
-    if (!resolved.ok) {
-      return c.json({ error: resolved.error }, 400);
+    const asset = await readPublicAssetResponse(mount.publicAssetStorage, assetRef);
+    if (!asset) {
+      return c.json({ error: "not found" }, 404);
+    }
+    if ("redirectUrl" in asset) {
+      return Response.redirect(asset.redirectUrl, 302);
     }
 
-    let file: Buffer;
-    try {
-      const stats = await fs.stat(resolved.fullPath);
-      if (!stats.isFile()) {
-        return c.json({ error: "not found" }, 404);
-      }
-      file = await fs.readFile(resolved.fullPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-        return c.json({ error: "not found" }, 404);
-      }
-      throw error;
-    }
-
-    return new Response(new Uint8Array(file), {
+    return new Response(new Uint8Array(asset.bytes), {
       status: 200,
       headers: {
-        "Content-Type": contentTypeFromPath(resolved.fullPath),
+        "Content-Type": asset.contentType,
         "Cache-Control": IMMUTABLE_CACHE_CONTROL,
       },
     });
@@ -457,8 +439,10 @@ async function initAgentMounts(
 
     const mcpServer = buildMcpServer({
       serverName: definition.mountName,
+      appName: definition.mountName,
       persistence,
       agentRegistry: registry,
+      publicAssetStorage: bundle.publicAssetStorage,
       publicAssetsDir: bundle.publicAssetsDir,
       publicAssetsBasePath: `${basePath.replace(/\/+$/, "")}/${definition.mountName}/public`,
     });
@@ -676,39 +660,58 @@ function resolvePublicBaseUrl(
   }
 }
 
-function resolvePublicAssetFilePath(
-  publicAssetsDir: string,
+function resolveRequestedPublicAssetRef(
+  appName: string,
   requestedPath: string,
-): { ok: true; fullPath: string } | { ok: false; error: string } {
-  if (requestedPath.includes("\0")) {
-    return { ok: false, error: "invalid path" };
+): string | null {
+  const normalizedPath = requestedPath.replace(/^\/+/, "");
+  if (normalizedPath.length === 0) {
+    return null;
   }
-  const normalized = path.posix.normalize(`/${requestedPath}`);
-  const segments = normalized.split("/").filter((segment) => segment.length > 0);
-  const resolvedSegments =
-    segments[0] === "public" ? segments.slice(1) : segments;
-  if (
-    resolvedSegments.length === 0 ||
-    resolvedSegments.some((segment) => segment === "." || segment === "..")
-  ) {
-    return { ok: false, error: "invalid path" };
+  if (normalizedPath.startsWith("ref/")) {
+    try {
+      const decoded = decodeURIComponent(normalizedPath.slice(4));
+      return decoded.length > 0 ? decoded : null;
+    } catch {
+      return null;
+    }
   }
-
-  // Always anchor under the mounted app's public root to block traversal.
-  const publicRoot = path.resolve(publicAssetsDir);
-  const fullPath = path.resolve(publicRoot, ...resolvedSegments);
-  if (
-    fullPath !== publicRoot &&
-    !fullPath.startsWith(`${publicRoot}${path.sep}`)
-  ) {
-    return { ok: false, error: "invalid path" };
-  }
-  return { ok: true, fullPath };
+  return toFileSystemAssetRef(appName, normalizedPath);
 }
 
-function contentTypeFromPath(fullPath: string): string {
-  const extension = path.extname(fullPath).toLowerCase();
-  return CONTENT_TYPE_BY_EXTENSION[extension] ?? "application/octet-stream";
+async function readPublicAssetResponse(
+  publicAssetStorage: PublicAssetStorage,
+  assetRef: string,
+): Promise<
+  | { bytes: Uint8Array; contentType: string }
+  | { redirectUrl: string }
+  | null
+> {
+  if (publicAssetStorage.readPublicAsset) {
+    const asset = await publicAssetStorage.readPublicAsset(assetRef);
+    if (asset) {
+      return asset;
+    }
+  }
+
+  const resolved = await publicAssetStorage.resolveForLlm({ assetRef });
+  if (resolved.mode === "url") {
+    return { redirectUrl: resolved.url };
+  }
+  return parseDataUrlAsset(resolved.dataUrl);
+}
+
+function parseDataUrlAsset(
+  dataUrl: string,
+): { bytes: Uint8Array; contentType: string } | null {
+  const match = /^data:([^;,]+);base64,(.+)$/i.exec(dataUrl);
+  if (!match) {
+    return null;
+  }
+  return {
+    bytes: Uint8Array.from(Buffer.from(match[2], "base64")),
+    contentType: match[1],
+  };
 }
 
 function shouldForwardNotification(

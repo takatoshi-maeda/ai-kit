@@ -2,11 +2,16 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { Hono } from "hono";
 import { mountMcpRoutes } from "../../src/hono/index.js";
 import type {
   AgentDefinition,
   MountableHonoApp,
 } from "../../src/hono/index.js";
+import {
+  FileSystemPublicAssetStorage,
+  fromFileSystemAssetRef,
+} from "../../src/agent/public-assets/filesystem.js";
 
 function createStubApp(): MountableHonoApp {
   return {
@@ -91,5 +96,38 @@ describe("mountMcpRoutes", () => {
       "utf8",
     );
     expect(stored).toContain('"type":"turn"');
+  });
+
+  it("serves filesystem-backed public assets via /public/*", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "ai-kit-hono-public-"));
+    const publicAssetStorage = new FileSystemPublicAssetStorage({
+      appName: "alpha",
+      publicDir: path.join(dataDir, "alpha", "public"),
+    });
+    const saved = await publicAssetStorage.saveImage({
+      sessionId: "session/1",
+      mediaType: "image/png",
+      bytes: Buffer.from(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a7G8AAAAASUVORK5CYII=",
+        "base64",
+      ),
+      now: new Date("2026-03-17T00:00:00.000Z"),
+    });
+    const relativePath = fromFileSystemAssetRef(saved.assetRef, "alpha");
+
+    const app = new Hono();
+    await mountMcpRoutes(app, {
+      agentDefinitions: createAgentDefinitions(),
+      persistence: {
+        kind: "filesystem",
+        dataDir,
+      },
+    });
+
+    const response = await app.request(`/api/mcp/alpha/public/${relativePath}`);
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/png");
+    expect(Buffer.from(await response.arrayBuffer()).length).toBeGreaterThan(0);
   });
 });

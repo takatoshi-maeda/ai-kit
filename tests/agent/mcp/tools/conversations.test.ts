@@ -7,6 +7,7 @@ import {
   handleConversationsGet,
   handleConversationsDelete,
 } from "../../../../src/agent/mcp/tools/conversations.js";
+import { toFileSystemAssetRef } from "../../../../src/agent/public-assets/filesystem.js";
 import { JsonlMcpPersistence } from "../../../../src/agent/mcp/jsonl-persistence.js";
 import { FileSystemStorage } from "../../../../src/storage/fs.js";
 import type { ConversationTurn } from "../../../../src/agent/mcp/persistence.js";
@@ -149,6 +150,47 @@ describe("conversations tools", () => {
           _publicBaseUrl: "http://127.0.0.1:3290/api/mcp/codefleet/public",
         },
         { publicAssetsBasePath: "/api/mcp/codefleet/public" },
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.turns[0].userContent).toEqual([
+        {
+          type: "image",
+          source: {
+            type: "url",
+            url: "http://127.0.0.1:3290/api/mcp/codefleet/public/uploads/2026/03/04/s1/test.png",
+          },
+        },
+      ]);
+      expect(parsed.turns[0].userMessage).toBe(
+        "[image:url:http://127.0.0.1:3290/api/mcp/codefleet/public/uploads/2026/03/04/s1/test.png] check",
+      );
+    });
+
+    it("converts filesystem asset refs to public URLs when called from HTTP transport", async () => {
+      const assetRef = toFileSystemAssetRef("codefleet", "uploads/2026/03/04/s1/test.png");
+      const userContent = [
+        { type: "image", source: { type: "url", url: assetRef } },
+      ] as const;
+      await persistence.appendConversationTurn(
+        "s1",
+        {
+          ...makeTurn(),
+          agentId: "front-desk",
+          userMessage: `[image:url:${assetRef}] check`,
+          userContent: [...userContent],
+        },
+        "Test",
+      );
+
+      const result = await handleConversationsGet(
+        persistence,
+        {
+          sessionId: "s1",
+          agentId: "front-desk",
+          _httpTransport: true,
+          _publicBaseUrl: "http://127.0.0.1:3290/api/mcp/codefleet/public",
+        },
+        { appName: "codefleet", publicAssetsBasePath: "/api/mcp/codefleet/public" },
       );
       const parsed = JSON.parse(result.content[0].text);
       expect(parsed.turns[0].userContent).toEqual([
