@@ -37,4 +37,45 @@ describe("loadAiKitConfig", () => {
 
     expect(config).toBeNull();
   });
+
+  it("prefers ai-kit.config.ts over ai-kit.config.mjs during auto-discovery", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ai-kit-config-"));
+    await writeFile(
+      path.join(cwd, "ai-kit.config.ts"),
+      'export default { persistence: { kind: "filesystem", dataDir: "from-ts" } };',
+      "utf8",
+    );
+    await writeFile(
+      path.join(cwd, "ai-kit.config.mjs"),
+      'export default { persistence: { kind: "filesystem", dataDir: "from-mjs" } };',
+      "utf8",
+    );
+
+    const config = await loadAiKitConfig({ cwd });
+
+    expect(config).toEqual({
+      persistence: {
+        kind: "filesystem",
+        dataDir: "from-ts",
+      },
+    });
+  });
+
+  it("falls back to ai-kit.config.mjs when no TypeScript config exists", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ai-kit-config-"));
+    await writeFile(
+      path.join(cwd, "ai-kit.config.mjs"),
+      'export default { persistence: { kind: "filesystem", dataDir: "from-mjs" } };',
+      "utf8",
+    );
+
+    const config = await loadAiKitConfig({ cwd });
+
+    expect(config).toEqual({
+      persistence: {
+        kind: "filesystem",
+        dataDir: "from-mjs",
+      },
+    });
+  });
 });

@@ -171,9 +171,7 @@ export function createFakeSupabaseClient(): FakeSupabaseClient {
       result = [...result].sort((left, right) => {
         const leftValue = left[column];
         const rightValue = right[column];
-        const cmp = leftValue === rightValue
-          ? 0
-          : String(leftValue ?? "").localeCompare(String(rightValue ?? ""));
+        const cmp = compareQueryValues(leftValue, rightValue);
         return ascending ? cmp : -cmp;
       });
     } else {
@@ -269,6 +267,16 @@ export function createFakeSupabaseClient(): FakeSupabaseClient {
     nextError = null;
     return error;
   }
+}
+
+function compareQueryValues(left: unknown, right: unknown): number {
+  if (left === right) {
+    return 0;
+  }
+  if (typeof left === "number" && typeof right === "number") {
+    return left - right;
+  }
+  return String(left ?? "").localeCompare(String(right ?? ""));
 }
 
 class FakeQueryBuilder<T extends Row> implements SupabaseQueryLike<T> {

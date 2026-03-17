@@ -62,4 +62,53 @@ describe("resolveAiKitOptions", () => {
       dataDir: "data",
     });
   });
+
+  it("auto-discovers ai-kit.config from process.cwd when configFile is omitted", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ai-kit-resolve-"));
+    await writeFile(
+      path.join(cwd, "ai-kit.config.mjs"),
+      'export default { persistence: { kind: "filesystem", dataDir: "from-autodiscovery" } };',
+      "utf8",
+    );
+
+    const previousCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const resolved = await resolveAiKitOptions({
+        agentDefinitions: [],
+      });
+
+      expect(resolved.persistence).toEqual({
+        kind: "filesystem",
+        dataDir: "from-autodiscovery",
+      });
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
+
+  it("skips auto-discovery when configFile is false even if cwd contains a config", async () => {
+    const cwd = await mkdtemp(path.join(os.tmpdir(), "ai-kit-resolve-"));
+    await writeFile(
+      path.join(cwd, "ai-kit.config.mjs"),
+      'export default { persistence: { kind: "filesystem", dataDir: "from-autodiscovery" } };',
+      "utf8",
+    );
+
+    const previousCwd = process.cwd();
+    process.chdir(cwd);
+    try {
+      const resolved = await resolveAiKitOptions({
+        agentDefinitions: [],
+        configFile: false,
+      });
+
+      expect(resolved.persistence).toEqual({
+        kind: "filesystem",
+        dataDir: "data",
+      });
+    } finally {
+      process.chdir(previousCwd);
+    }
+  });
 });
