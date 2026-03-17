@@ -90,7 +90,7 @@ export class SupabasePersistence implements AgentPersistence {
 
   constructor(options: SupabasePersistenceOptions) {
     this.appName = options.appName;
-    this.tablePrefix = options.tablePrefix ?? "agent_";
+    this.tablePrefix = options.tablePrefix ?? "ai_kit_";
     this.client = options.client ?? createSupabaseBackendClient({
       url: requiredOption(options.url, "url"),
       serviceRoleKey: requiredOption(options.serviceRoleKey, "serviceRoleKey"),

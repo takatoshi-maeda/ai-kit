@@ -45,6 +45,16 @@ export function createFakeSupabaseClient(): FakeSupabaseClient {
       return new FakeQueryBuilder<T>(table, executeQuery);
     },
     storage: {
+      async getBucket(bucket: string) {
+        const error = consumeError();
+        if (error) {
+          return { data: null, error };
+        }
+        if (!storageBuckets.has(bucket)) {
+          return { data: null, error: { message: `Bucket not found: ${bucket}` } };
+        }
+        return { data: { id: bucket }, error: null };
+      },
       from(bucket: string): SupabaseStorageBucketLike {
         return {
           async upload(path: string, body: ArrayBuffer | ArrayBufferView, options) {

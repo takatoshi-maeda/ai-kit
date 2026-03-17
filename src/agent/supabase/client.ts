@@ -36,11 +36,16 @@ export interface SupabaseStorageBucketLike {
   ): Promise<{ data: { signedUrl: string } | null; error: SupabaseLikeError | null }>;
 }
 
+export interface SupabaseStorageRootLike {
+  from(bucket: string): SupabaseStorageBucketLike;
+  getBucket(
+    id: string,
+  ): Promise<{ data: { id: string } | null; error: SupabaseLikeError | null }>;
+}
+
 export interface SupabaseClientLike {
   from<T = Record<string, unknown>>(table: string): SupabaseQueryLike<T>;
-  storage: {
-    from(bucket: string): SupabaseStorageBucketLike;
-  };
+  storage: SupabaseStorageRootLike;
 }
 
 export interface CreateSupabaseClientOptions {
