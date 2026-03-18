@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { AuthContext } from "../../../auth/index.js";
 import type { AgentRegistry } from "../agent-registry.js";
 import type { McpPersistence, ConversationTurn, TimelineItem } from "../persistence.js";
 import { AgentContextImpl } from "../../context.js";
@@ -116,6 +117,7 @@ export type McpStreamNotification =
 export interface AgentToolDeps {
   registry: AgentRegistry;
   persistence: McpPersistence;
+  authContext?: AuthContext;
   sendNotification?: (method: string, params: Record<string, unknown>) => Promise<void>;
   appName?: string;
   publicAssetStorage?: PublicAssetStorage;
@@ -267,6 +269,7 @@ export async function handleAgentRun(
   const context = new AgentContextImpl({
     history: new InMemoryHistory(),
     sessionId,
+    auth: deps.authContext,
     selectedAgentName: agentId,
   });
 
@@ -454,6 +457,7 @@ export async function handleAgentRun(
   // Write idempotency record
   if (idempotencyKey) {
     await deps.persistence.writeIdempotencyRecord({
+      userId: deps.authContext?.userId ?? "anonymous",
       idempotencyKey,
       sessionId,
       runId,

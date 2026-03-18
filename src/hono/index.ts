@@ -2,7 +2,17 @@ import { buildMcpServer } from "../agent/mcp/server.js";
 import { AgentRegistry } from "../agent/mcp/agent-registry.js";
 import type { McpPersistence } from "../agent/mcp/persistence.js";
 import {
-  createPersistenceBundle,
+  AuthError,
+  type AuthBackend,
+  createAuthBackend,
+  getRequestRuntimeScope,
+  runWithRequestRuntimeScope,
+  type AuthBackendOptions,
+  type RequestRuntimeScope,
+} from "../auth/index.js";
+import {
+  createPersistenceBundleResolver,
+  type PersistenceBundleResolver,
   type PersistenceBackendOptions,
 } from "../agent/persistence/factory.js";
 import { toFileSystemAssetRef } from "../agent/public-assets/filesystem.js";
@@ -84,6 +94,9 @@ export interface AgentMount {
   publicAssetsDir?: string;
   registry: AgentRegistry;
   transport: McpInProcessTransport;
+  runtimeResolver: PersistenceBundleResolver;
+  auth: AuthBackendOptions;
+  authBackend: AuthBackend;
 }
 
 export interface MountMcpRoutesOptions {
@@ -92,6 +105,7 @@ export interface MountMcpRoutesOptions {
   dataDir?: string;
   basePath?: string;
   persistence?: PersistenceBackendOptions;
+  auth?: AuthBackendOptions;
   configFile?: string | false;
   /**
    * Hook invoked right after each mount object is created and before the MCP
@@ -165,20 +179,23 @@ export async function mountMcpRoutes(
       return c.json({ error: "not found" }, 404);
     }
 
-    const asset = await readPublicAssetResponse(mount.publicAssetStorage, assetRef);
-    if (!asset) {
-      return c.json({ error: "not found" }, 404);
-    }
-    if ("redirectUrl" in asset) {
-      return Response.redirect(asset.redirectUrl, 302);
-    }
+    return withMountRequestScope(mount, c.req.raw.headers, async () => {
+      const scope = getRequiredRequestScope();
+      const asset = await readPublicAssetResponse(scope.publicAssetStorage, assetRef);
+      if (!asset) {
+        return c.json({ error: "not found" }, 404);
+      }
+      if ("redirectUrl" in asset) {
+        return Response.redirect(asset.redirectUrl, 302);
+      }
 
-    return new Response(new Uint8Array(asset.bytes), {
-      status: 200,
-      headers: {
-        "Content-Type": asset.contentType,
-        "Cache-Control": IMMUTABLE_CACHE_CONTROL,
-      },
+      return new Response(new Uint8Array(asset.bytes), {
+        status: 200,
+        headers: {
+          "Content-Type": asset.contentType,
+          "Cache-Control": IMMUTABLE_CACHE_CONTROL,
+        },
+      });
     });
   });
 
@@ -217,7 +234,11 @@ export async function mountMcpRoutes(
       });
     }
 
-    return sseResponseFromRequest(transport, requestWithHttpMarker);
+    return withMountRequestScope(
+      mount,
+      c.req.raw.headers,
+      () => sseResponseFromRequest(transport, requestWithHttpMarker),
+    );
   });
 
   app.get(`${basePath}/:app_name/status`, async (c) => {
@@ -248,7 +269,11 @@ export async function mountMcpRoutes(
     }
 
     if (body.jsonrpc === "2.0" && typeof body.method === "string") {
-      return handleBridgePayload(transport, body);
+      return withMountRequestScope(
+        mount,
+        c.req.raw.headers,
+        () => handleBridgePayload(transport, body),
+      );
     }
 
     const resolvedToolName =
@@ -291,23 +316,25 @@ export async function mountMcpRoutes(
       },
     };
 
-    if (!wantsStream) {
-      try {
-        const response = await transport.request(
-          jsonRpcPayload as unknown as JSONRPCMessage,
-        );
-        return c.json(response, 200, {
-          "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
-        });
-      } catch (error) {
-        const message = error instanceof Error
-          ? error.message
-          : String(error ?? "error");
-        return c.json({ error: message }, 500);
+    return withMountRequestScope(mount, c.req.raw.headers, async () => {
+      if (!wantsStream) {
+        try {
+          const response = await transport.request(
+            jsonRpcPayload as unknown as JSONRPCMessage,
+          );
+          return c.json(response, 200, {
+            "MCP-Protocol-Version": MCP_PROTOCOL_VERSION,
+          });
+        } catch (error) {
+          const message = error instanceof Error
+            ? error.message
+            : String(error ?? "error");
+          return c.json({ error: message }, 500);
+        }
       }
-    }
 
-    return handleBridgePayload(transport, jsonRpcPayload);
+      return handleBridgePayload(transport, jsonRpcPayload);
+    });
   });
 
   app.get(basePath, (c) => {
@@ -323,6 +350,68 @@ export async function mountMcpRoutes(
   });
 
   return mounts;
+}
+
+async function withMountRequestScope<T>(
+  mount: AgentMount,
+  headers: Headers,
+  callback: () => Promise<T> | T,
+): Promise<T | Response> {
+  try {
+    const auth = await mount.authBackend.authenticateRequest({ headers });
+    const bundle = await mount.runtimeResolver.getBundle({ userId: auth.userId });
+    return await runWithRequestRuntimeScope({
+      auth,
+      persistence: bundle.persistence,
+      publicAssetStorage: bundle.publicAssetStorage,
+      publicAssetsDir: bundle.publicAssetsDir,
+    }, async () => await callback());
+  } catch (error) {
+    if (error instanceof AuthError) {
+      logAuthFailure(mount, headers, error);
+      return new Response(
+        JSON.stringify({ error: error.message }),
+        {
+          status: error.status,
+          headers: {
+            "Content-Type": "application/json",
+            "WWW-Authenticate": error.wwwAuthenticate,
+          },
+        },
+      );
+    }
+    throw error;
+  }
+}
+
+function logAuthFailure(
+  mount: AgentMount,
+  headers: Headers,
+  error: AuthError,
+): void {
+  const authorization = headers.get("authorization");
+  const hasBearerToken = typeof authorization === "string" && /^Bearer\s+\S+/i.test(authorization);
+  const authScheme = typeof authorization === "string"
+    ? authorization.split(/\s+/, 1)[0] ?? "unknown"
+    : "missing";
+  console.error("[ai-kit] authentication failed", {
+    appName: mount.definition.appName,
+    authBackend: mount.auth.kind,
+    hasAuthorizationHeader: typeof authorization === "string" && authorization.length > 0,
+    hasBearerToken,
+    authScheme,
+    status: error.status,
+    message: error.message,
+    wwwAuthenticate: error.wwwAuthenticate,
+  });
+}
+
+function getRequiredRequestScope(): RequestRuntimeScope {
+  const scope = getRequestRuntimeScope();
+  if (!scope) {
+    throw new Error("request runtime scope is not available");
+  }
+  return scope;
 }
 
 class InProcessMcpTransport implements Transport, McpInProcessTransport {
@@ -451,9 +540,12 @@ async function initAgentMounts(
   const mounts = new Map<string, AgentMount>();
 
   for (const definition of definitions) {
-    const bundle = await createPersistenceBundle(definition.appName, {
+    const auth = options.auth ?? { kind: "none" };
+    const authBackend = createAuthBackend(auth);
+    const runtimeResolver = await createPersistenceBundleResolver(definition.appName, {
       persistence: options.persistence ?? { kind: "filesystem", dataDir: "data" },
     });
+    const bundle = await runtimeResolver.getBundle({ userId: "anonymous" });
     const persistence = bundle.persistence;
     const registry = new AgentRegistry({
       agents: definition.agents.map((agent) => ({
@@ -487,6 +579,9 @@ async function initAgentMounts(
       publicAssetsDir: bundle.publicAssetsDir,
       registry,
       transport,
+      runtimeResolver,
+      auth,
+      authBackend,
     };
 
     if (onMountCreated) {

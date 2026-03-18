@@ -95,6 +95,7 @@ export interface McpUsageSummary {
 
 /** 冪等性レコード */
 export interface IdempotencyRecord {
+  userId: string;
   idempotencyKey: string;
   sessionId: string;
   runId: string;

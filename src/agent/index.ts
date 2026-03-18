@@ -96,3 +96,13 @@ export type {
   AgentRunResult,
   McpStreamNotification,
 } from "./mcp/index.js";
+export type {
+  AuthBackendOptions,
+  AuthContext,
+  Auth0AuthBackendOptions,
+  NoneAuthBackendOptions,
+} from "../auth/index.js";
+export {
+  AuthError,
+  createAuthBackend,
+} from "../auth/index.js";

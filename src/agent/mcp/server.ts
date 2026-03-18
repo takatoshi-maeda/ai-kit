@@ -1,5 +1,6 @@
 import { McpServer as SdkMcpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { getRequestRuntimeScope, type AuthContext } from "../../auth/index.js";
 import type { AgentRegistry } from "./agent-registry.js";
 import type { McpPersistence } from "./persistence.js";
 import type { PublicAssetStorage } from "../public-assets/storage.js";
@@ -67,7 +68,16 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
     server.registerTool("agent.list", {
       description: "List available agents",
     }, async () => {
-      const deps: AgentToolDeps = { registry: agentRegistry, persistence };
+      const runtime = resolveRuntimeServices(
+        persistence,
+        publicAssetStorage,
+        publicAssetsDir,
+      );
+      const deps: AgentToolDeps = {
+        registry: agentRegistry,
+        persistence: runtime.persistence,
+        authContext: runtime.auth,
+      };
       return handleAgentList(deps);
     });
 
@@ -77,13 +87,19 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
       inputSchema: runShape,
     }, async (args, extra) => {
       const parsed = AgentRunParamsSchema.parse(args);
-      const deps: AgentToolDeps = {
-        registry: agentRegistry,
+      const runtime = resolveRuntimeServices(
         persistence,
-        appName,
         publicAssetStorage,
         publicAssetsDir,
+      );
+      const deps: AgentToolDeps = {
+        registry: agentRegistry,
+        persistence: runtime.persistence,
+        appName,
+        publicAssetStorage: runtime.publicAssetStorage,
+        publicAssetsDir: runtime.publicAssetsDir,
         publicAssetsBasePath,
+        authContext: runtime.auth,
         sendNotification: async (method, params) => {
           const token = parsed.notificationToken;
           const payload: Record<string, unknown> = { ...params };
@@ -107,7 +123,11 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
     inputSchema: listShape,
   }, async (args) => {
     const parsed = ConversationsListParamsSchema.parse(args);
-    return handleConversationsList(persistence, {
+    return handleConversationsList(resolveRuntimeServices(
+      persistence,
+      publicAssetStorage,
+      publicAssetsDir,
+    ).persistence, {
       ...parsed,
       agentId: resolveConversationAgentId(agentRegistry, parsed.agentId),
     });
@@ -120,7 +140,12 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
   }, async (args, extra) => {
     const parsed = ConversationsGetParamsSchema.parse(args);
     const isHttpTransport = parsed._httpTransport === true || extra.requestInfo !== undefined;
-    return handleConversationsGet(persistence, {
+    const runtime = resolveRuntimeServices(
+      persistence,
+      publicAssetStorage,
+      publicAssetsDir,
+    );
+    return handleConversationsGet(runtime.persistence, {
       ...parsed,
       agentId: resolveConversationAgentId(agentRegistry, parsed.agentId),
       _httpTransport: isHttpTransport,
@@ -136,7 +161,11 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
     inputSchema: deleteShape,
   }, async (args) => {
     const parsed = ConversationsDeleteParamsSchema.parse(args);
-    return handleConversationsDelete(persistence, {
+    return handleConversationsDelete(resolveRuntimeServices(
+      persistence,
+      publicAssetStorage,
+      publicAssetsDir,
+    ).persistence, {
       ...parsed,
       agentId: resolveConversationAgentId(agentRegistry, parsed.agentId),
     });
@@ -149,14 +178,22 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
     inputSchema: usageShape,
   }, async (args) => {
     const parsed = UsageSummaryParamsSchema.parse(args);
-    return handleUsageSummary(persistence, parsed);
+    return handleUsageSummary(resolveRuntimeServices(
+      persistence,
+      publicAssetStorage,
+      publicAssetsDir,
+    ).persistence, parsed);
   });
 
   // --- Health tool ---
   server.registerTool("health.check", {
     description: "Check storage health",
   }, async () => {
-    return handleHealthCheck(persistence);
+    return handleHealthCheck(resolveRuntimeServices(
+      persistence,
+      publicAssetStorage,
+      publicAssetsDir,
+    ).persistence);
   });
 
   return server;
@@ -180,4 +217,31 @@ function resolveConversationAgentId(
     return agentId;
   }
   return agentRegistry.resolveAgentId(agentId);
+}
+
+function resolveRuntimeServices(
+  fallbackPersistence: McpPersistence,
+  fallbackPublicAssetStorage?: PublicAssetStorage,
+  fallbackPublicAssetsDir?: string,
+): {
+  auth: AuthContext | undefined;
+  persistence: McpPersistence;
+  publicAssetStorage?: PublicAssetStorage;
+  publicAssetsDir?: string;
+} {
+  const scope = getRequestRuntimeScope();
+  if (scope) {
+    return {
+      auth: scope.auth,
+      persistence: scope.persistence,
+      publicAssetStorage: scope.publicAssetStorage,
+      publicAssetsDir: scope.publicAssetsDir,
+    };
+  }
+  return {
+    auth: undefined,
+    persistence: fallbackPersistence,
+    publicAssetStorage: fallbackPublicAssetStorage,
+    publicAssetsDir: fallbackPublicAssetsDir,
+  };
 }

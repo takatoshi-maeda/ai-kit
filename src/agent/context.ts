@@ -1,4 +1,5 @@
 import type { ZodType } from "zod";
+import type { AuthContext } from "../auth/index.js";
 import type {
   AgentContext,
   ConversationHistory,
@@ -11,6 +12,7 @@ import { ProgressTrackerImpl } from "./progress.js";
 export interface AgentContextOptions {
   history: ConversationHistory;
   sessionId?: string;
+  auth?: AuthContext;
   progress?: ProgressTracker;
   selectedAgentName?: string;
 }
@@ -18,6 +20,7 @@ export interface AgentContextOptions {
 export class AgentContextImpl implements AgentContext {
   readonly history: ConversationHistory;
   readonly sessionId: string;
+  readonly auth?: AuthContext;
   readonly progress: ProgressTracker;
   readonly toolCallResults: LLMToolCall[] = [];
   readonly turns: TurnResult[] = [];
@@ -27,8 +30,12 @@ export class AgentContextImpl implements AgentContext {
   constructor(options: AgentContextOptions) {
     this.history = options.history;
     this.sessionId = options.sessionId ?? crypto.randomUUID();
+    this.auth = options.auth;
     this.progress = options.progress ?? new ProgressTrackerImpl();
     this.selectedAgentName = options.selectedAgentName;
+    if (options.auth) {
+      this.metadata.set("auth", options.auth);
+    }
   }
 
   collectToolResults<T>(schema: ZodType<T>): T[] {

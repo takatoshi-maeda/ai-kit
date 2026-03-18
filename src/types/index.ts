@@ -67,6 +67,7 @@ export type {
   AgentMemory,
   MemoryItem,
 } from "./agent.js";
+export type { AuthContext } from "../auth/index.js";
 
 export type {
   ModelCapabilities,

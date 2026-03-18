@@ -62,6 +62,7 @@ export type {
   ProgressStep,
   AgentMemory,
   MemoryItem,
+  AuthContext,
   // Model
   ModelCapabilities,
   ModelInfo,
@@ -188,6 +189,8 @@ export { PromptLoader, MarkdownPromptLoader } from "./prompt/index.js";
 
 // MCP
 export {
+  AuthError,
+  createAuthBackend,
   createMcpServer,
   buildMcpServer,
   AgentRegistry,
@@ -202,6 +205,9 @@ export {
   toSupabaseAssetRef,
 } from "./agent/index.js";
 export type {
+  AuthBackendOptions,
+  Auth0AuthBackendOptions,
+  NoneAuthBackendOptions,
   CreateMcpServerOptions,
   McpServerOptions,
   AgentEntry,

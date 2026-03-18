@@ -21,7 +21,9 @@ describe("createPersistenceBundle", () => {
 
     expect(bundle.persistence).toBeInstanceOf(FilesystemPersistence);
     expect(bundle.publicAssetStorage).toBeInstanceOf(FileSystemPublicAssetStorage);
-    expect(bundle.publicAssetsDir).toBe(path.resolve(dataDir, "chat-app", "public"));
+    expect(bundle.publicAssetsDir).toBe(
+      path.resolve(dataDir, "chat-app", "users", "anonymous", "public"),
+    );
 
     await bundle.persistence.appendConversationTurn("session-1", {
       turnId: "turn-1",
@@ -33,7 +35,7 @@ describe("createPersistenceBundle", () => {
     });
 
     const stored = await readFile(
-      path.join(dataDir, "chat-app", "conversations", "session-1.jsonl"),
+      path.join(dataDir, "chat-app", "users", "anonymous", "conversations", "session-1.jsonl"),
       "utf8",
     );
     expect(stored).toContain('"type":"turn"');
@@ -121,7 +123,9 @@ describe("createPersistenceBundle", () => {
 
     expect(bundle.persistence).toBeInstanceOf(PostgresPersistence);
     expect(typeof bundle.publicAssetStorage.saveImage).toBe("function");
-    expect(bundle.publicAssetsDir).toContain(path.join("chat-app", "public"));
+    expect(bundle.publicAssetsDir).toContain(
+      path.join("chat-app", "users", "anonymous", "public"),
+    );
 
     await bundle.persistence.appendConversationTurn("session-1", {
       turnId: "turn-1",

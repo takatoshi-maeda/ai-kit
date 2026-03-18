@@ -21,6 +21,7 @@ import {
 interface ConversationRow {
   id?: number;
   app_name: string;
+  user_id: string;
   agent_id: string | null;
   agent_name: string | null;
   session_id: string;
@@ -42,6 +43,7 @@ interface ConversationEventRow {
 interface InputHistoryRow {
   id?: number;
   app_name: string;
+  user_id: string;
   agent_id: string | null;
   agent_name: string | null;
   session_id: string | null;
@@ -53,6 +55,7 @@ interface InputHistoryRow {
 interface UsageEntryRow {
   id?: number;
   app_name: string;
+  user_id: string;
   agent_id: string | null;
   agent_name: string | null;
   session_id: string | null;
@@ -65,6 +68,7 @@ interface UsageEntryRow {
 interface IdempotencyRow {
   id?: number;
   app_name: string;
+  user_id: string;
   agent_id: string | null;
   session_id: string;
   idempotency_key: string;
@@ -76,6 +80,7 @@ interface IdempotencyRow {
 
 export interface SupabasePersistenceOptions {
   appName: string;
+  userId: string;
   url?: string;
   serviceRoleKey?: string;
   schema?: string;
@@ -86,10 +91,12 @@ export interface SupabasePersistenceOptions {
 export class SupabasePersistence implements AgentPersistence {
   private readonly client: SupabaseClientLike;
   private readonly appName: string;
+  private readonly userId: string;
   private readonly tablePrefix: string;
 
   constructor(options: SupabasePersistenceOptions) {
     this.appName = options.appName;
+    this.userId = options.userId;
     this.tablePrefix = options.tablePrefix ?? "ai_kit_";
     this.client = options.client ?? createSupabaseBackendClient({
       url: requiredOption(options.url, "url"),
@@ -129,6 +136,7 @@ export class SupabasePersistence implements AgentPersistence {
       .from<ConversationRow>(this.tableName("conversations"))
       .select("session_id,agent_id,updated_at")
       .eq("app_name", this.appName)
+      .eq("user_id", this.userId)
       .order("updated_at", { ascending: false });
 
     if (agentId) {
@@ -159,6 +167,7 @@ export class SupabasePersistence implements AgentPersistence {
       .from<ConversationRow>(this.tableName("conversations"))
       .delete()
       .eq("app_name", this.appName)
+      .eq("user_id", this.userId)
       .eq("session_id", sessionId)
       .eq("agent_scope", toAgentScope(agentId))
       .select("id");
@@ -242,6 +251,7 @@ export class SupabasePersistence implements AgentPersistence {
       .from<InputHistoryRow>(this.tableName("input_history"))
       .insert({
         app_name: this.appName,
+        user_id: this.userId,
         agent_id: null,
         agent_name: null,
         session_id: sessionId ?? null,
@@ -259,6 +269,7 @@ export class SupabasePersistence implements AgentPersistence {
       .from<InputHistoryRow>(this.tableName("input_history"))
       .select("entry")
       .eq("app_name", this.appName)
+      .eq("user_id", this.userId)
       .order("id", { ascending: true });
     if (error) {
       throw new Error(formatSupabaseError(error));
@@ -276,6 +287,7 @@ export class SupabasePersistence implements AgentPersistence {
       .from<UsageEntryRow>(this.tableName("usage_entries"))
       .insert({
         app_name: this.appName,
+        user_id: this.userId,
         agent_id: null,
         agent_name: null,
         session_id: sessionId ?? null,
@@ -294,6 +306,7 @@ export class SupabasePersistence implements AgentPersistence {
       .from<UsageEntryRow>(this.tableName("usage_entries"))
       .select("amount,currency,created_at")
       .eq("app_name", this.appName)
+      .eq("user_id", this.userId)
       .order("id", { ascending: true });
     if (error) {
       throw new Error(formatSupabaseError(error));
@@ -331,8 +344,9 @@ export class SupabasePersistence implements AgentPersistence {
   ): Promise<IdempotencyRecord | null> {
     const { data, error } = await this.client
       .from<IdempotencyRow>(this.tableName("idempotency_records"))
-      .select("idempotency_key,session_id,run_id,status,result,agent_id,created_at")
+      .select("idempotency_key,user_id,session_id,run_id,status,result,agent_id,created_at")
       .eq("app_name", this.appName)
+      .eq("user_id", this.userId)
       .eq("idempotency_key", key)
       .maybeSingle();
     if (error) {
@@ -348,6 +362,7 @@ export class SupabasePersistence implements AgentPersistence {
       runId: data.run_id,
       status: data.status,
       result: data.result,
+      userId: data.user_id,
       agentId: data.agent_id ?? undefined,
       createdAt: data.created_at,
     };
@@ -359,6 +374,7 @@ export class SupabasePersistence implements AgentPersistence {
       .upsert(
         {
           app_name: this.appName,
+          user_id: this.userId,
           agent_id: record.agentId ?? null,
           session_id: record.sessionId,
           idempotency_key: record.idempotencyKey,
@@ -368,7 +384,7 @@ export class SupabasePersistence implements AgentPersistence {
           created_at: record.createdAt,
         },
         {
-          onConflict: "app_name,idempotency_key",
+          onConflict: "app_name,user_id,idempotency_key",
           ignoreDuplicates: false,
         },
       );
@@ -383,6 +399,7 @@ export class SupabasePersistence implements AgentPersistence {
         .from<ConversationRow>(this.tableName("conversations"))
         .select("id")
         .eq("app_name", this.appName)
+        .eq("user_id", this.userId)
         .limit(1);
       if (error) {
         throw new Error(formatSupabaseError(error));
@@ -417,6 +434,7 @@ export class SupabasePersistence implements AgentPersistence {
 
     const row = {
       app_name: this.appName,
+      user_id: this.userId,
       session_id: sessionId,
       agent_scope: toAgentScope(agentId),
       agent_id: agentId ?? null,
@@ -429,7 +447,7 @@ export class SupabasePersistence implements AgentPersistence {
     const { data, error } = await this.client
       .from<ConversationRow>(this.tableName("conversations"))
       .upsert(row, {
-        onConflict: "app_name,session_id,agent_scope",
+        onConflict: "app_name,user_id,session_id,agent_scope",
         ignoreDuplicates: false,
       })
       .select("id")
@@ -472,6 +490,7 @@ export class SupabasePersistence implements AgentPersistence {
       .from<ConversationRow>(this.tableName("conversations"))
       .select("*")
       .eq("app_name", this.appName)
+      .eq("user_id", this.userId)
       .eq("session_id", sessionId)
       .eq("agent_scope", toAgentScope(agentId))
       .maybeSingle();

@@ -19,6 +19,7 @@ const IMAGE_MEDIA_TYPE_TO_EXTENSION: Record<string, string> = {
 
 export interface SupabasePublicAssetStorageOptions {
   appName: string;
+  objectKeyPrefix?: string;
   bucket?: string;
   signedUrlExpiresInSeconds?: number;
   url?: string;
@@ -30,11 +31,15 @@ export interface SupabasePublicAssetStorageOptions {
 export class SupabasePublicAssetStorage implements PublicAssetStorage {
   private readonly client: SupabaseClientLike;
   private readonly appName: string;
+  private readonly objectKeyPrefix: string;
   private readonly bucket: string;
   private readonly signedUrlExpiresInSeconds: number;
 
   constructor(options: SupabasePublicAssetStorageOptions) {
     this.appName = options.appName;
+    this.objectKeyPrefix = options.objectKeyPrefix
+      ? options.objectKeyPrefix.replace(/\/+$/, "")
+      : "";
     this.bucket = options.bucket ?? "ai-kit";
     this.signedUrlExpiresInSeconds = options.signedUrlExpiresInSeconds ?? 60;
     this.client = options.client ?? createSupabaseBackendClient({
@@ -54,6 +59,7 @@ export class SupabasePublicAssetStorage implements PublicAssetStorage {
     const now = input.now ?? new Date();
     const agentId = input.agentId ?? this.appName;
     const objectKey = [
+      ...(this.objectKeyPrefix ? [this.objectKeyPrefix] : []),
       this.appName,
       toSafePathSegment(agentId),
       "uploads",

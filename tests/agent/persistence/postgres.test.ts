@@ -7,6 +7,7 @@ describe("PostgresPersistence", () => {
     const sql = createFakePostgresSql();
     const persistence = new PostgresPersistence({
       appName: "chat-app",
+      userId: "anonymous",
       sql,
     });
 
@@ -34,6 +35,7 @@ describe("PostgresPersistence", () => {
     const sql = createFakePostgresSql();
     const persistence = new PostgresPersistence({
       appName: "chat-app",
+      userId: "anonymous",
       sql,
     });
 
@@ -65,6 +67,7 @@ describe("PostgresPersistence", () => {
     const sql = createFakePostgresSql({ dateTimestamps: true });
     const persistence = new PostgresPersistence({
       appName: "chat-app",
+      userId: "anonymous",
       sql,
     });
 
@@ -98,10 +101,12 @@ describe("PostgresPersistence", () => {
     const sql = createFakePostgresSql();
     const persistence = new PostgresPersistence({
       appName: "chat-app",
+      userId: "anonymous",
       sql,
     });
 
     await persistence.writeIdempotencyRecord({
+      userId: "anonymous",
       idempotencyKey: "key-1",
       sessionId: "session-1",
       runId: "run-1",
@@ -113,6 +118,7 @@ describe("PostgresPersistence", () => {
 
     const record = await persistence.readIdempotencyRecord("key-1");
     expect(record).toEqual({
+      userId: "anonymous",
       idempotencyKey: "key-1",
       sessionId: "session-1",
       runId: "run-1",
@@ -127,6 +133,7 @@ describe("PostgresPersistence", () => {
     const sql = createFakePostgresSql({ stringIds: true });
     const persistence = new PostgresPersistence({
       appName: "chat-app",
+      userId: "anonymous",
       sql,
     });
 

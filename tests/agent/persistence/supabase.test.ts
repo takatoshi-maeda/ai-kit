@@ -20,6 +20,7 @@ describe("SupabasePersistence", () => {
     const filesystem = new FilesystemPersistence(new FileSystemStorage(tmpDir));
     const supabase = new SupabasePersistence({
       appName: "chat-app",
+      userId: "anonymous",
       client: createFakeSupabaseClient(),
     });
 
@@ -33,6 +34,7 @@ describe("SupabasePersistence", () => {
     const client = createFakeSupabaseClient();
     const persistence = new SupabasePersistence({
       appName: "chat-app",
+      userId: "anonymous",
       client,
     });
 
@@ -123,6 +125,7 @@ async function exercisePersistence(persistence: AgentPersistence): Promise<{
     await persistence.appendInputMessageHistory("later", "sess-2", "run-2");
 
     await persistence.writeIdempotencyRecord({
+      userId: "anonymous",
       idempotencyKey: "idem-1",
       sessionId: "sess-1",
       runId: "run-1",

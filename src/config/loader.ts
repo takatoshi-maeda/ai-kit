@@ -1,10 +1,12 @@
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import type { AuthBackendOptions } from "../auth/index.js";
 import type { PersistenceBackendOptions } from "../agent/persistence/factory.js";
 
 export interface AiKitConfig {
   persistence?: PersistenceBackendOptions;
+  auth?: AuthBackendOptions;
 }
 
 export interface LoadAiKitConfigOptions {
@@ -107,11 +109,8 @@ function isAiKitConfig(value: unknown): value is AiKitConfig {
     return false;
   }
 
-  if (value.persistence === undefined) {
-    return true;
-  }
-
-  return isPersistenceBackendOptions(value.persistence);
+  return (value.persistence === undefined || isPersistenceBackendOptions(value.persistence)) &&
+    (value.auth === undefined || isAuthBackendOptions(value.auth));
 }
 
 function isPersistenceBackendOptions(value: unknown): value is PersistenceBackendOptions {
@@ -137,6 +136,27 @@ function isPersistenceBackendOptions(value: unknown): value is PersistenceBacken
         (value.schema === undefined || typeof value.schema === "string") &&
         (value.tablePrefix === undefined || typeof value.tablePrefix === "string") &&
         (value.assetDataDir === undefined || typeof value.assetDataDir === "string");
+    default:
+      return false;
+  }
+}
+
+function isAuthBackendOptions(value: unknown): value is AuthBackendOptions {
+  if (!isRecord(value) || typeof value.kind !== "string") {
+    return false;
+  }
+
+  switch (value.kind) {
+    case "none":
+      return true;
+    case "auth0":
+      return typeof value.issuerBaseUrl === "string" &&
+        typeof value.audience === "string" &&
+        (value.jwksUri === undefined || typeof value.jwksUri === "string") &&
+        (
+          value.clockToleranceSeconds === undefined ||
+          typeof value.clockToleranceSeconds === "number"
+        );
     default:
       return false;
   }

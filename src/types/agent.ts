@@ -1,4 +1,5 @@
 import type { ZodType } from "zod";
+import type { AuthContext } from "../auth/index.js";
 import type { LLMChatInput, LLMResult, LLMUsage } from "./llm.js";
 import type {
   AgentTool,
@@ -11,6 +12,7 @@ import type {
 export interface AgentContext {
   history: ConversationHistory;
   sessionId: string;
+  auth?: AuthContext;
   progress: ProgressTracker;
   toolCallResults: LLMToolCall[];
   turns: TurnResult[];

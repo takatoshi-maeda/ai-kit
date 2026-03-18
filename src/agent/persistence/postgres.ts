@@ -21,6 +21,7 @@ import {
 interface ConversationRow extends Record<string, unknown> {
   id: number;
   app_name: string;
+  user_id: string;
   agent_id: string | null;
   agent_name: string | null;
   session_id: string;
@@ -50,6 +51,7 @@ interface UsageEntryRow extends Record<string, unknown> {
 }
 
 interface IdempotencyRow extends Record<string, unknown> {
+  user_id: string;
   idempotency_key: string;
   session_id: string;
   run_id: string;
@@ -61,6 +63,7 @@ interface IdempotencyRow extends Record<string, unknown> {
 
 export interface PostgresPersistenceOptions {
   appName: string;
+  userId: string;
   connectionString?: string;
   schema?: string;
   tablePrefix?: string;
@@ -70,12 +73,14 @@ export interface PostgresPersistenceOptions {
 export class PostgresPersistence implements AgentPersistence {
   private readonly sql: PostgresSqlLike;
   private readonly appName: string;
+  private readonly userId: string;
   private readonly schema: string;
   private readonly tablePrefix: string;
   private readonly ownsClient: boolean;
 
   constructor(options: PostgresPersistenceOptions) {
     this.appName = options.appName;
+    this.userId = options.userId;
     this.schema = options.schema ?? "public";
     this.tablePrefix = options.tablePrefix ?? "ai_kit_";
     this.ownsClient = !options.sql;
@@ -120,11 +125,12 @@ export class PostgresPersistence implements AgentPersistence {
     limit?: number,
     agentId?: string,
   ): Promise<ConversationSummary[]> {
-    const params: unknown[] = [this.appName];
+    const params: unknown[] = [this.appName, this.userId];
     let query = `
       select session_id, agent_id, updated_at
       from ${this.table("conversations")}
       where app_name = $1
+        and user_id = $2
     `;
     if (agentId) {
       params.push(toAgentScope(agentId));
@@ -154,11 +160,12 @@ export class PostgresPersistence implements AgentPersistence {
       `
         delete from ${this.table("conversations")}
         where app_name = $1
-          and session_id = $2
-          and agent_scope = $3
+          and user_id = $2
+          and session_id = $3
+          and agent_scope = $4
         returning id
       `,
-      [this.appName, sessionId, toAgentScope(agentId)],
+      [this.appName, this.userId, sessionId, toAgentScope(agentId)],
     );
     return rows.length > 0;
   }
@@ -241,10 +248,10 @@ export class PostgresPersistence implements AgentPersistence {
       this.sql,
       `
         insert into ${this.table("input_history")} (
-          app_name, agent_id, agent_name, session_id, entry, run_id, created_at
-        ) values ($1, $2, $3, $4, $5, $6, $7)
+          app_name, user_id, agent_id, agent_name, session_id, entry, run_id, created_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8)
       `,
-      [this.appName, null, null, sessionId ?? null, entry, runId ?? null, new Date().toISOString()],
+      [this.appName, this.userId, null, null, sessionId ?? null, entry, runId ?? null, new Date().toISOString()],
     );
   }
 
@@ -255,9 +262,10 @@ export class PostgresPersistence implements AgentPersistence {
         select entry
         from ${this.table("input_history")}
         where app_name = $1
+          and user_id = $2
         order by id asc
       `,
-      [this.appName],
+      [this.appName, this.userId],
     );
     return rows.map((row) => row.entry);
   }
@@ -272,11 +280,12 @@ export class PostgresPersistence implements AgentPersistence {
       this.sql,
       `
         insert into ${this.table("usage_entries")} (
-          app_name, agent_id, agent_name, session_id, amount, currency, run_id, created_at
-        ) values ($1, $2, $3, $4, $5, $6, $7, $8)
+          app_name, user_id, agent_id, agent_name, session_id, amount, currency, run_id, created_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
       `,
       [
         this.appName,
+        this.userId,
         null,
         null,
         sessionId ?? null,
@@ -295,9 +304,10 @@ export class PostgresPersistence implements AgentPersistence {
         select amount, currency, created_at
         from ${this.table("usage_entries")}
         where app_name = $1
+          and user_id = $2
         order by id asc
       `,
-      [this.appName],
+      [this.appName, this.userId],
     );
     if (rows.length === 0) {
       return null;
@@ -331,13 +341,14 @@ export class PostgresPersistence implements AgentPersistence {
     const rows = await this.query<IdempotencyRow>(
       this.sql,
       `
-        select idempotency_key, session_id, run_id, status, result, agent_id, created_at
+        select idempotency_key, user_id, session_id, run_id, status, result, agent_id, created_at
         from ${this.table("idempotency_records")}
         where app_name = $1
-          and idempotency_key = $2
+          and user_id = $2
+          and idempotency_key = $3
         limit 1
       `,
-      [this.appName, key],
+      [this.appName, this.userId, key],
     );
     const data = rows[0];
     if (!data) {
@@ -350,6 +361,7 @@ export class PostgresPersistence implements AgentPersistence {
       runId: data.run_id,
       status: data.status,
       result: data.result,
+      userId: data.user_id,
       agentId: data.agent_id ?? undefined,
       createdAt: normalizeTimestamp(data.created_at),
     };
@@ -360,10 +372,11 @@ export class PostgresPersistence implements AgentPersistence {
       this.sql,
       `
         insert into ${this.table("idempotency_records")} (
-          app_name, agent_id, session_id, idempotency_key, run_id, status, result, created_at
-        ) values ($1, $2, $3, $4, $5, $6, $7, $8)
-        on conflict (app_name, idempotency_key)
+          app_name, user_id, agent_id, session_id, idempotency_key, run_id, status, result, created_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        on conflict (app_name, user_id, idempotency_key)
         do update set
+          user_id = excluded.user_id,
           agent_id = excluded.agent_id,
           session_id = excluded.session_id,
           run_id = excluded.run_id,
@@ -373,6 +386,7 @@ export class PostgresPersistence implements AgentPersistence {
       `,
       [
         this.appName,
+        this.userId,
         record.agentId ?? null,
         record.sessionId,
         record.idempotencyKey,
@@ -392,9 +406,10 @@ export class PostgresPersistence implements AgentPersistence {
           select id
           from ${this.table("conversations")}
           where app_name = $1
+            and user_id = $2
           limit 1
         `,
-        [this.appName],
+        [this.appName, this.userId],
       );
       return { ok: true, driver: "postgres" };
     } catch (error) {
@@ -429,10 +444,11 @@ export class PostgresPersistence implements AgentPersistence {
       sql,
       `
         insert into ${this.table("conversations")} (
-          app_name, session_id, agent_scope, agent_id, agent_name, title, updated_at, created_at
-        ) values ($1, $2, $3, $4, $5, $6, $7, $8)
-        on conflict (app_name, session_id, agent_scope)
+          app_name, user_id, session_id, agent_scope, agent_id, agent_name, title, updated_at, created_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        on conflict (app_name, user_id, session_id, agent_scope)
         do update set
+          user_id = excluded.user_id,
           agent_id = excluded.agent_id,
           agent_name = excluded.agent_name,
           title = excluded.title,
@@ -441,6 +457,7 @@ export class PostgresPersistence implements AgentPersistence {
       `,
       [
         this.appName,
+        this.userId,
         sessionId,
         toAgentScope(agentId),
         agentId ?? null,
@@ -485,11 +502,12 @@ export class PostgresPersistence implements AgentPersistence {
         select *
         from ${this.table("conversations")}
         where app_name = $1
-          and session_id = $2
-          and agent_scope = $3
+          and user_id = $2
+          and session_id = $3
+          and agent_scope = $4
         limit 1
       `,
-      [this.appName, sessionId, toAgentScope(agentId)],
+      [this.appName, this.userId, sessionId, toAgentScope(agentId)],
     );
     return rows[0] ?? null;
   }

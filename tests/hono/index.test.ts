@@ -57,7 +57,7 @@ describe("mountMcpRoutes", () => {
     });
 
     const stored = await readFile(
-      path.join(configuredDataDir, "alpha", "conversations", "session-1.jsonl"),
+      path.join(configuredDataDir, "alpha", "users", "anonymous", "conversations", "session-1.jsonl"),
       "utf8",
     );
     expect(stored).toContain('"type":"turn"');
@@ -93,7 +93,7 @@ describe("mountMcpRoutes", () => {
     });
 
     const stored = await readFile(
-      path.join(overrideDataDir, "alpha", "conversations", "session-2.jsonl"),
+      path.join(overrideDataDir, "alpha", "users", "anonymous", "conversations", "session-2.jsonl"),
       "utf8",
     );
     expect(stored).toContain('"type":"turn"');
@@ -103,7 +103,7 @@ describe("mountMcpRoutes", () => {
     const dataDir = await mkdtemp(path.join(os.tmpdir(), "ai-kit-hono-public-"));
     const publicAssetStorage = new FileSystemPublicAssetStorage({
       appName: "alpha",
-      publicDir: path.join(dataDir, "alpha", "public"),
+      publicDir: path.join(dataDir, "alpha", "users", "anonymous", "public"),
     });
     const saved = await publicAssetStorage.saveImage({
       sessionId: "session/1",
@@ -172,7 +172,7 @@ describe("mountMcpRoutes", () => {
     });
 
     const stored = await readFile(
-      path.join(dataDir, "workspace", "conversations", "writer", "session-group.jsonl"),
+      path.join(dataDir, "workspace", "users", "anonymous", "conversations", "writer", "session-group.jsonl"),
       "utf8",
     );
     expect(stored).toContain('"agentId":"writer"');
