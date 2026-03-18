@@ -52,6 +52,7 @@ export interface DoctorReport {
   backend: PersistenceBackendOptions["kind"];
   config: Record<string, string | boolean | null>;
   checks: DoctorCheckResult[];
+  migrationStatus: DoctorCheckResult[];
 }
 
 export interface ResolvedSupabaseCliConfig extends SupabaseBackend {
@@ -139,6 +140,7 @@ export function listPostgresTables(config: ResolvedPostgresCliConfig): string[] 
 
 function listPersistenceTables(tablePrefix: string): string[] {
   return [
+    `${tablePrefix}versions`,
     `${tablePrefix}conversations`,
     `${tablePrefix}conversation_events`,
     `${tablePrefix}input_history`,
@@ -147,20 +149,142 @@ function listPersistenceTables(tablePrefix: string): string[] {
   ];
 }
 
+function requiredPersistenceTableColumns(
+  tablePrefix: string,
+): Array<{ table: string; columns: string[] }> {
+  return [
+    {
+      table: `${tablePrefix}versions`,
+      columns: [
+        "version",
+        "applied_at",
+      ],
+    },
+    {
+      table: `${tablePrefix}conversations`,
+      columns: [
+        "id",
+        "app_name",
+        "user_id",
+        "agent_id",
+        "agent_name",
+        "session_id",
+        "agent_scope",
+        "title",
+        "created_at",
+        "updated_at",
+      ],
+    },
+    {
+      table: `${tablePrefix}conversation_events`,
+      columns: [
+        "id",
+        "conversation_id",
+        "event_type",
+        "event_timestamp",
+        "data",
+        "created_at",
+      ],
+    },
+    {
+      table: `${tablePrefix}input_history`,
+      columns: [
+        "id",
+        "app_name",
+        "user_id",
+        "agent_id",
+        "agent_name",
+        "session_id",
+        "entry",
+        "run_id",
+        "created_at",
+      ],
+    },
+    {
+      table: `${tablePrefix}usage_entries`,
+      columns: [
+        "id",
+        "app_name",
+        "user_id",
+        "agent_id",
+        "agent_name",
+        "session_id",
+        "amount",
+        "currency",
+        "run_id",
+        "created_at",
+      ],
+    },
+    {
+      table: `${tablePrefix}idempotency_records`,
+      columns: [
+        "id",
+        "app_name",
+        "user_id",
+        "agent_id",
+        "session_id",
+        "idempotency_key",
+        "run_id",
+        "status",
+        "result",
+        "created_at",
+      ],
+    },
+  ];
+}
+
 export function formatDoctorReport(report: DoctorReport, asJson = false): string {
   if (asJson) {
     return JSON.stringify(report, null, 2);
   }
 
+  const color = createTerminalColorizer();
   const lines = [
-    `Backend: ${report.backend}`,
-    `Status: ${report.ok ? "ok" : "error"}`,
-    "Config:",
+    `${color.bold("Backend:")} ${report.backend}`,
+    `${color.bold("Status:")} ${report.ok ? color.ok("ok") : color.error("error")}`,
+    color.bold("Config:"),
     ...Object.entries(report.config).map(([key, value]) => `  ${key}: ${String(value)}`),
-    "Checks:",
-    ...report.checks.map((check) => `  [${check.ok ? "ok" : "error"}] ${check.name}: ${check.detail}`),
+    color.bold("Checks:"),
+    ...report.checks.map((check) =>
+      `  ${check.ok ? color.ok("[ok]") : color.error("[error]")} ${check.name}: ${check.detail}`
+    ),
+    color.bold("MigrationStatus:"),
+    ...report.migrationStatus.map((check) =>
+      `  ${check.ok ? color.ok("[ok]") : color.error("[error]")} ${check.name}: ${check.detail}`
+    ),
   ];
   return lines.join("\n");
+}
+
+function createTerminalColorizer(): {
+  bold: (value: string) => string;
+  ok: (value: string) => string;
+  error: (value: string) => string;
+} {
+  if (!shouldUseTerminalColors()) {
+    return {
+      bold: (value) => value,
+      ok: (value) => value,
+      error: (value) => value,
+    };
+  }
+
+  const wrap = (code: string) => (value: string) => `\u001B[${code}m${value}\u001B[0m`;
+  return {
+    bold: wrap("1"),
+    ok: wrap("32"),
+    error: wrap("31"),
+  };
+}
+
+function shouldUseTerminalColors(): boolean {
+  if (process.env.NO_COLOR !== undefined) {
+    return false;
+  }
+  if (process.env.FORCE_COLOR !== undefined) {
+    return process.env.FORCE_COLOR !== "0";
+  }
+  return Boolean(process.stdout?.isTTY);
 }
 
 export async function ensureDirectoryReady(targetDir: string): Promise<void> {
@@ -211,8 +335,27 @@ export async function runPostgresSetup(
   const sql = createPostgresClient({
     connectionString: options.dbUrl ?? config.connectionString,
   });
+  const versionsTable = qualifiedTable(config.schema, `${config.tablePrefix}versions`);
   try {
-    await sql.unsafe(buildPostgresSetupSql(config));
+    await sql.unsafe(buildMigrationBootstrapSql(config.schema, config.tablePrefix));
+    const appliedRows = await sql.unsafe<{ version: string }>(
+      `select version from ${versionsTable} order by version asc`,
+    );
+    const appliedVersions = new Set(
+      appliedRows
+        .map((row) => row.version)
+        .filter((value): value is string => typeof value === "string" && value.length > 0),
+    );
+    for (const migration of buildPersistenceMigrations(config.schema, config.tablePrefix)) {
+      if (appliedVersions.has(migration.version)) {
+        continue;
+      }
+      await sql.unsafe(migration.statements.join("\n\n"));
+      await sql.unsafe(
+        `insert into ${versionsTable} (version, applied_at) values ($1, now())`,
+        [migration.version],
+      );
+    }
   } finally {
     await sql.end?.({ timeout: 0 });
   }
@@ -249,24 +392,51 @@ async function runSupabaseSetupWithDbUrl(
 
 export async function inspectSupabaseResources(
   config: ResolvedSupabaseCliConfig,
-): Promise<DoctorCheckResult[]> {
+): Promise<{ checks: DoctorCheckResult[]; migrationStatus: DoctorCheckResult[] }> {
   const checks: DoctorCheckResult[] = [];
+  const migrationStatus: DoctorCheckResult[] = [];
   const persistenceClient = createSupabaseBackendClient({
     url: config.url,
     serviceRoleKey: config.serviceRoleKey,
     schema: config.schema,
   });
+  const versionsTable = `${config.tablePrefix}versions`;
+  let appliedVersions = new Set<string>();
 
-  for (const table of listSupabaseTables(config)) {
+  try {
+    const { data, error } = await persistenceClient
+      .from<{ version: string }>(versionsTable)
+      .select("version")
+      .order("version", { ascending: true });
+    if (error) {
+      throw new Error(error.message);
+    }
+    appliedVersions = new Set(
+      (Array.isArray(data) ? data : data ? [data] : [])
+        .map((row) => row.version)
+        .filter((value): value is string => typeof value === "string" && value.length > 0),
+    );
+  } catch (error) {
+    migrationStatus.push({
+      name: `migrations:${config.schema}.${versionsTable}`,
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
+
+  for (const { table, columns } of requiredPersistenceTableColumns(config.tablePrefix)) {
     try {
-      const { error } = await persistenceClient.from(table).select("*").limit(1);
+      const { error } = await persistenceClient
+        .from(table)
+        .select(columns.join(","))
+        .limit(1);
       if (error) {
         throw new Error(error.message);
       }
       checks.push({
         name: `table:${config.schema}.${table}`,
         ok: true,
-        detail: "reachable",
+        detail: "required columns ok",
       });
     } catch (error) {
       checks.push({
@@ -275,6 +445,14 @@ export async function inspectSupabaseResources(
         detail: error instanceof Error ? error.message : String(error),
       });
     }
+  }
+
+  for (const migration of buildPersistenceMigrations(config.schema, config.tablePrefix)) {
+    migrationStatus.push({
+      name: migration.version,
+      ok: appliedVersions.has(migration.version),
+      detail: appliedVersions.has(migration.version) ? "applied" : "pending",
+    });
   }
 
   try {
@@ -303,39 +481,48 @@ export async function inspectSupabaseResources(
     });
   }
 
-  return checks;
+  return { checks, migrationStatus };
 }
 
 export async function inspectPostgresResources(
   config: ResolvedPostgresCliConfig,
-): Promise<DoctorCheckResult[]> {
+): Promise<{ checks: DoctorCheckResult[]; migrationStatus: DoctorCheckResult[] }> {
   const checks: DoctorCheckResult[] = [];
-  const backend = new PostgresPersistence({
-    appName: "ai-kit-doctor",
-    connectionString: config.connectionString,
-    schema: config.schema,
-    tablePrefix: config.tablePrefix,
-  });
+  const migrationStatus: DoctorCheckResult[] = [];
+  const sql = createPostgresClient({ connectionString: config.connectionString });
+  let appliedVersions = new Set<string>();
   try {
-    const health = await backend.checkHealth();
+    await sql.unsafe("select 1");
     checks.push({
       name: "connectivity",
-      ok: health.ok,
-      detail: health.ok ? "query ok" : (health.error ?? "connectivity check failed"),
+      ok: true,
+      detail: "query ok",
     });
-  } finally {
-    await backend.close();
-  }
-
-  const sql = createPostgresClient({ connectionString: config.connectionString });
-  try {
-    for (const table of listPostgresTables(config)) {
+    try {
+      const rows = await sql.unsafe<{ version: string }>(
+        `select version from ${qualifiedTable(config.schema, `${config.tablePrefix}versions`)} order by version asc`,
+      );
+      appliedVersions = new Set(
+        rows
+          .map((row) => row.version)
+          .filter((value): value is string => typeof value === "string" && value.length > 0),
+      );
+    } catch (error) {
+      migrationStatus.push({
+        name: `migrations:${config.schema}.${config.tablePrefix}versions`,
+        ok: false,
+        detail: error instanceof Error ? error.message : String(error),
+      });
+    }
+    for (const { table, columns } of requiredPersistenceTableColumns(config.tablePrefix)) {
       try {
-        await sql.unsafe(`select 1 from ${qualifiedTable(config.schema, table)} limit 1`);
+        await sql.unsafe(
+          `select ${columns.join(", ")} from ${qualifiedTable(config.schema, table)} limit 1`,
+        );
         checks.push({
           name: `table:${config.schema}.${table}`,
           ok: true,
-          detail: "reachable",
+          detail: "required columns ok",
         });
       } catch (error) {
         checks.push({
@@ -345,6 +532,19 @@ export async function inspectPostgresResources(
         });
       }
     }
+    for (const migration of buildPersistenceMigrations(config.schema, config.tablePrefix)) {
+      migrationStatus.push({
+        name: migration.version,
+        ok: appliedVersions.has(migration.version),
+        detail: appliedVersions.has(migration.version) ? "applied" : "pending",
+      });
+    }
+  } catch (error) {
+    checks.push({
+      name: "connectivity",
+      ok: false,
+      detail: error instanceof Error ? error.message : String(error),
+    });
   } finally {
     await sql.end?.({ timeout: 0 });
   }
@@ -365,31 +565,96 @@ export async function inspectPostgresResources(
     });
   }
 
-  return checks;
+  return { checks, migrationStatus };
 }
 
 export function buildSupabaseSetupSql(config: ResolvedSupabaseCliConfig): string {
   return [
-    buildPersistenceSetupSql(config.schema, config.tablePrefix),
+    buildVersionedPersistenceSetupSql(config.schema, config.tablePrefix),
     buildSupabaseStorageSetupSql(config.bucket),
   ].join("\n\n");
 }
 
 export function buildPostgresSetupSql(config: ResolvedPostgresCliConfig): string {
-  return buildPersistenceSetupSql(config.schema, config.tablePrefix);
+  return [
+    buildMigrationBootstrapSql(config.schema, config.tablePrefix),
+    ...buildPersistenceMigrations(config.schema, config.tablePrefix).map((migration) =>
+      [
+        `-- migration:${migration.version}`,
+        ...migration.statements,
+        `insert into ${qualifiedTable(config.schema, `${config.tablePrefix}versions`)} (version, applied_at)`,
+        `values (${quoteLiteral(migration.version)}, now())`,
+        `on conflict (version) do nothing;`,
+      ].join("\n")
+    ),
+  ].join("\n\n");
 }
 
-function buildPersistenceSetupSql(schema: string, tablePrefix: string): string {
+function buildVersionedPersistenceSetupSql(schema: string, tablePrefix: string): string {
+  return [
+    buildMigrationBootstrapSql(schema, tablePrefix),
+    ...buildPersistenceMigrations(schema, tablePrefix).map((migration) =>
+      buildVersionedMigrationSql(schema, tablePrefix, migration.version, migration.statements)
+    ),
+  ].join("\n\n");
+}
+
+function buildMigrationBootstrapSql(schema: string, tablePrefix: string): string {
+  const schemaName = quoteIdentifier(schema);
+  const versions = qualifiedTable(schema, `${tablePrefix}versions`);
+  return [
+    `create schema if not exists ${schemaName};`,
+    "",
+    `create table if not exists ${versions} (`,
+    "  version text primary key,",
+    "  applied_at timestamptz not null",
+    ");",
+  ].join("\n");
+}
+
+function buildVersionedMigrationSql(
+  schema: string,
+  tablePrefix: string,
+  version: string,
+  statements: string[],
+): string {
+  const versions = qualifiedTable(schema, `${tablePrefix}versions`);
+  return [
+    "do $$",
+    "begin",
+    `  if not exists (select 1 from ${versions} where version = ${quoteLiteral(version)}) then`,
+    ...statements.map((statement) => statement.split("\n").map((line) => `    ${line}`).join("\n")),
+    `    insert into ${versions} (version, applied_at) values (${quoteLiteral(version)}, now());`,
+    "  end if;",
+    "end $$;",
+  ].join("\n");
+}
+
+function buildPersistenceMigrations(
+  schema: string,
+  tablePrefix: string,
+): Array<{ version: string; statements: string[] }> {
+  return [
+    {
+      version: "20260317000000",
+      statements: buildInitialPersistenceMigrationStatements(schema, tablePrefix),
+    },
+    {
+      version: "20260318000000",
+      statements: buildUserIdMigrationStatements(schema, tablePrefix),
+    },
+  ];
+}
+
+function buildInitialPersistenceMigrationStatements(schema: string, tablePrefix: string): string[] {
   const schemaName = quoteIdentifier(schema);
   const conversations = qualifiedTable(schema, `${tablePrefix}conversations`);
   const events = qualifiedTable(schema, `${tablePrefix}conversation_events`);
   const inputHistory = qualifiedTable(schema, `${tablePrefix}input_history`);
   const usageEntries = qualifiedTable(schema, `${tablePrefix}usage_entries`);
   const idempotency = qualifiedTable(schema, `${tablePrefix}idempotency_records`);
-
-  return [
+  return [[
     `create schema if not exists ${schemaName};`,
-    "",
     `create table if not exists ${conversations} (`,
     "  id bigint generated by default as identity primary key,",
     "  app_name text not null,",
@@ -404,7 +669,6 @@ function buildPersistenceSetupSql(schema: string, tablePrefix: string): string {
     ");",
     `create index if not exists ${quoteIdentifier(`${tablePrefix}conversations_app_updated_idx`)}`,
     `  on ${conversations} (app_name, updated_at desc);`,
-    "",
     `create table if not exists ${events} (`,
     "  id bigint generated by default as identity primary key,",
     `  conversation_id bigint not null references ${conversations} (id) on delete cascade,`,
@@ -415,7 +679,6 @@ function buildPersistenceSetupSql(schema: string, tablePrefix: string): string {
     ");",
     `create index if not exists ${quoteIdentifier(`${tablePrefix}conversation_events_conversation_idx`)}`,
     `  on ${events} (conversation_id, id);`,
-    "",
     `create table if not exists ${inputHistory} (`,
     "  id bigint generated by default as identity primary key,",
     "  app_name text not null,",
@@ -428,7 +691,6 @@ function buildPersistenceSetupSql(schema: string, tablePrefix: string): string {
     ");",
     `create index if not exists ${quoteIdentifier(`${tablePrefix}input_history_app_created_idx`)}`,
     `  on ${inputHistory} (app_name, created_at desc);`,
-    "",
     `create table if not exists ${usageEntries} (`,
     "  id bigint generated by default as identity primary key,",
     "  app_name text not null,",
@@ -442,7 +704,6 @@ function buildPersistenceSetupSql(schema: string, tablePrefix: string): string {
     ");",
     `create index if not exists ${quoteIdentifier(`${tablePrefix}usage_entries_app_created_idx`)}`,
     `  on ${usageEntries} (app_name, created_at desc);`,
-    "",
     `create table if not exists ${idempotency} (`,
     "  id bigint generated by default as identity primary key,",
     "  app_name text not null,",
@@ -455,7 +716,53 @@ function buildPersistenceSetupSql(schema: string, tablePrefix: string): string {
     "  created_at timestamptz not null,",
     "  unique (app_name, idempotency_key)",
     ");",
-  ].join("\n");
+  ].join("\n")];
+}
+
+function buildUserIdMigrationStatements(schema: string, tablePrefix: string): string[] {
+  const conversations = qualifiedTable(schema, `${tablePrefix}conversations`);
+  const inputHistory = qualifiedTable(schema, `${tablePrefix}input_history`);
+  const usageEntries = qualifiedTable(schema, `${tablePrefix}usage_entries`);
+  const idempotency = qualifiedTable(schema, `${tablePrefix}idempotency_records`);
+  const conversationsLegacyConstraint = quoteIdentifier(
+    `${tablePrefix}conversations_app_name_session_id_agent_scope_key`,
+  );
+  const idempotencyLegacyConstraint = quoteIdentifier(
+    `${tablePrefix}idempotency_records_app_name_idempotency_key_key`,
+  );
+
+  return [
+    `alter table ${conversations} add column if not exists user_id text;`,
+    `update ${conversations} set user_id = 'anonymous' where user_id is null;`,
+    `alter table ${conversations} alter column user_id set not null;`,
+    `alter table ${conversations} drop constraint if exists ${conversationsLegacyConstraint};`,
+    `drop index if exists ${qualifiedTable(schema, `${tablePrefix}conversations_app_updated_idx`)};`,
+    `create unique index if not exists ${quoteIdentifier(`${tablePrefix}conversations_identity_idx`)}`,
+    `  on ${conversations} (app_name, user_id, session_id, agent_scope);`,
+    `create index if not exists ${quoteIdentifier(`${tablePrefix}conversations_app_updated_idx`)}`,
+    `  on ${conversations} (app_name, user_id, updated_at desc);`,
+
+    `alter table ${inputHistory} add column if not exists user_id text;`,
+    `update ${inputHistory} set user_id = 'anonymous' where user_id is null;`,
+    `alter table ${inputHistory} alter column user_id set not null;`,
+    `drop index if exists ${qualifiedTable(schema, `${tablePrefix}input_history_app_created_idx`)};`,
+    `create index if not exists ${quoteIdentifier(`${tablePrefix}input_history_app_created_idx`)}`,
+    `  on ${inputHistory} (app_name, user_id, created_at desc);`,
+
+    `alter table ${usageEntries} add column if not exists user_id text;`,
+    `update ${usageEntries} set user_id = 'anonymous' where user_id is null;`,
+    `alter table ${usageEntries} alter column user_id set not null;`,
+    `drop index if exists ${qualifiedTable(schema, `${tablePrefix}usage_entries_app_created_idx`)};`,
+    `create index if not exists ${quoteIdentifier(`${tablePrefix}usage_entries_app_created_idx`)}`,
+    `  on ${usageEntries} (app_name, user_id, created_at desc);`,
+
+    `alter table ${idempotency} add column if not exists user_id text;`,
+    `update ${idempotency} set user_id = 'anonymous' where user_id is null;`,
+    `alter table ${idempotency} alter column user_id set not null;`,
+    `alter table ${idempotency} drop constraint if exists ${idempotencyLegacyConstraint};`,
+    `create unique index if not exists ${quoteIdentifier(`${tablePrefix}idempotency_identity_idx`)}`,
+    `  on ${idempotency} (app_name, user_id, idempotency_key);`,
+  ];
 }
 
 function buildSupabaseStorageSetupSql(bucket: string): string {

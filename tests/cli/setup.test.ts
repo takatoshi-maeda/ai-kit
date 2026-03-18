@@ -32,7 +32,7 @@ describe("runSetupCommand", () => {
     expect(result.isDirectory()).toBe(true);
   });
 
-  it("creates postgres tables directly through postgres.js", async () => {
+  it("applies postgres migrations through postgres.js and records versions", async () => {
     const cwd = await mkdtemp(path.join(os.tmpdir(), "ai-kit-cli-setup-pg-"));
     const configPath = path.join(cwd, "ai-kit.config.mjs");
     const fakeSql = createFakePostgresSql();
@@ -70,6 +70,11 @@ describe("runSetupCommand", () => {
 
     expect(message).toContain("Postgres backend setup completed");
     expect(fakeSql.appliedSql().join("\n")).toContain('create schema if not exists "custom_schema";');
+    expect(fakeSql.appliedSql().join("\n")).toContain('"custom_versions"');
+    expect(fakeSql.tableRows("versions")).toEqual([
+      expect.objectContaining({ version: "20260317000000" }),
+      expect.objectContaining({ version: "20260318000000" }),
+    ]);
     const result = await stat(path.join(cwd, "runtime-assets"));
     expect(result.isDirectory()).toBe(true);
   });
@@ -227,6 +232,9 @@ describe("runSetupCommand", () => {
       "utf8",
     );
     expect(migration).toContain('create schema if not exists "linked_schema";');
+    expect(migration).toContain('"linked_versions"');
+    expect(migration).toContain("20260317000000");
+    expect(migration).toContain("20260318000000");
     expect(migration).toContain('"linked_conversations"');
     expect(migration).toContain("'linked-bucket'");
   });

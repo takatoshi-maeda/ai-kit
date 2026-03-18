@@ -38,15 +38,16 @@ export async function collectDoctorReport(options: DoctorCommandOptions): Promis
         dataDir: targetDir,
       },
       checks,
+      migrationStatus: [],
     };
   }
 
   if (persistence.kind === "postgres") {
     const config = resolvePostgresConfig(persistence, options, options.cwd);
-    const checks = await inspectPostgresResources(config);
+    const { checks, migrationStatus } = await inspectPostgresResources(config);
 
     return {
-      ok: checks.every((check) => check.ok),
+      ok: [...checks, ...migrationStatus].every((check) => check.ok),
       backend: "postgres",
       config: {
         connectionString: redactConnectionString(config.connectionString),
@@ -55,12 +56,14 @@ export async function collectDoctorReport(options: DoctorCommandOptions): Promis
         assetDataDir: config.assetDataDir,
       },
       checks,
+      migrationStatus,
     };
   }
 
   const config = resolveSupabaseConfig(persistence, options);
   const backend = new SupabasePersistence({
     appName: "ai-kit-doctor",
+    userId: "anonymous",
     url: config.url,
     serviceRoleKey: config.serviceRoleKey,
     schema: config.schema,
@@ -72,10 +75,11 @@ export async function collectDoctorReport(options: DoctorCommandOptions): Promis
     ok: health.ok,
     detail: health.ok ? "query ok" : (health.error ?? "connectivity check failed"),
   }];
-  checks.push(...await inspectSupabaseResources(config));
+  const resources = await inspectSupabaseResources(config);
+  checks.push(...resources.checks);
 
   return {
-    ok: checks.every((check) => check.ok),
+    ok: [...checks, ...resources.migrationStatus].every((check) => check.ok),
     backend: "supabase",
     config: {
       url: config.url,
@@ -84,6 +88,7 @@ export async function collectDoctorReport(options: DoctorCommandOptions): Promis
       bucket: config.bucket,
     },
     checks,
+    migrationStatus: resources.migrationStatus,
   };
 }
 
