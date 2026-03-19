@@ -28,7 +28,7 @@ describe("PostgresPersistence", () => {
     expect(conversation?.agentName).toBe("Chat App");
     expect(conversation?.turns).toHaveLength(1);
     expect(sql.tableRows("conversations")).toHaveLength(1);
-    expect(sql.tableRows("conversation_events")).toHaveLength(2);
+    expect(sql.tableRows("conversation_events")).toHaveLength(1);
   });
 
   it("keeps in-progress run state and summarizes usage", async () => {

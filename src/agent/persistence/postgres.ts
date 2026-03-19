@@ -124,7 +124,7 @@ export class PostgresPersistence implements AgentPersistence {
         select event_type, event_timestamp, data
         from ${this.table("conversation_events")}
         where conversation_id = $1
-          and event_type in ('meta', 'turn')
+          and event_type = 'turn'
         order by id asc
       `,
       [conversation.id],
@@ -146,7 +146,14 @@ export class PostgresPersistence implements AgentPersistence {
       data: row.data,
       timestamp: normalizeTimestamp(row.event_timestamp),
     }));
-    return assembleConversation(sessionId, records, toRunState(runStateRows[0]), agentId);
+    return assembleConversation(sessionId, records, {
+      title: conversation.title ?? undefined,
+      agentId: conversation.agent_id ?? agentId,
+      agentName: conversation.agent_name ?? undefined,
+      latestRunState: toRunState(runStateRows[0]),
+      createdAt: normalizeTimestamp(conversation.created_at),
+      updatedAt: normalizeTimestamp(conversation.updated_at),
+    });
   }
 
   async listConversationSummaries(
@@ -211,18 +218,6 @@ export class PostgresPersistence implements AgentPersistence {
         updatedAt: timestamp,
       });
 
-      if (title || turn.agentId || turn.agentName) {
-        await this.insertEvent(tx, conversationId, {
-          type: "meta",
-          data: {
-            ...(title ? { title } : {}),
-            ...(turn.agentId ? { agentId: turn.agentId } : {}),
-            ...(turn.agentName ? { agentName: turn.agentName } : {}),
-          },
-          timestamp,
-        });
-      }
-
       await this.insertEvent(tx, conversationId, {
         type: "turn",
         data: turn,
@@ -247,17 +242,6 @@ export class PostgresPersistence implements AgentPersistence {
         agentName: state.agentName,
         updatedAt: timestamp,
       });
-
-      if (!existingConversation && (state.agentId || state.agentName)) {
-        await this.insertEvent(tx, conversationId, {
-          type: "meta",
-          data: {
-            ...(state.agentId ? { agentId: state.agentId } : {}),
-            ...(state.agentName ? { agentName: state.agentName } : {}),
-          },
-          timestamp,
-        });
-      }
 
       await this.upsertRunStateRecord(tx, conversationId, state, timestamp);
     });

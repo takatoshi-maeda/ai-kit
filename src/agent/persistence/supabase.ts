@@ -145,13 +145,20 @@ export class SupabasePersistence implements AgentPersistence {
       throw new Error(formatSupabaseError(runStateResult.error));
     }
     const records = asArray<ConversationEventRow>(data)
-      .filter((row) => row.event_type === "meta" || row.event_type === "turn")
+      .filter((row) => row.event_type === "turn")
       .map<ConversationRecord>((row) => ({
         type: row.event_type,
         data: row.data,
         timestamp: row.event_timestamp,
       }));
-    return assembleConversation(sessionId, records, toRunState(asArray(runStateResult.data)[0]), agentId);
+    return assembleConversation(sessionId, records, {
+      title: conversation.title ?? undefined,
+      agentId: conversation.agent_id ?? agentId,
+      agentName: conversation.agent_name ?? undefined,
+      latestRunState: toRunState(asArray(runStateResult.data)[0]),
+      createdAt: conversation.created_at,
+      updatedAt: conversation.updated_at,
+    });
   }
 
   async listConversationSummaries(
@@ -215,18 +222,6 @@ export class SupabasePersistence implements AgentPersistence {
       updatedAt: timestamp,
     });
 
-    if (title || turn.agentId || turn.agentName) {
-      await this.insertEvent(conversationId, {
-        type: "meta",
-        data: {
-          ...(title ? { title } : {}),
-          ...(turn.agentId ? { agentId: turn.agentId } : {}),
-          ...(turn.agentName ? { agentName: turn.agentName } : {}),
-        },
-        timestamp,
-      });
-    }
-
     await this.insertEvent(conversationId, {
       type: "turn",
       data: turn,
@@ -249,17 +244,6 @@ export class SupabasePersistence implements AgentPersistence {
       agentName: state.agentName,
       updatedAt: timestamp,
     });
-
-    if (!existingConversation && (state.agentId || state.agentName)) {
-      await this.insertEvent(conversationId, {
-        type: "meta",
-        data: {
-          ...(state.agentId ? { agentId: state.agentId } : {}),
-          ...(state.agentName ? { agentName: state.agentName } : {}),
-        },
-        timestamp,
-      });
-    }
 
     await this.upsertRunStateRecord(conversationId, state, timestamp);
   }

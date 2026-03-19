@@ -12,38 +12,42 @@ export interface ConversationMetaRecord {
 }
 
 export interface ConversationRecord {
-  type: "turn" | "meta";
-  data: ConversationTurn | ConversationMetaRecord;
+  type: "turn";
+  data: ConversationTurn;
   timestamp: string;
 }
 
 export function assembleConversation(
   sessionId: string,
   records: ConversationRecord[],
-  latestRunState?: RunState,
-  agentId?: string,
+  options?: {
+    title?: string;
+    agentId?: string;
+    agentName?: string;
+    latestRunState?: RunState;
+    createdAt?: string;
+    updatedAt?: string;
+  },
 ): Conversation {
   const turns: ConversationTurn[] = [];
-  let title: string | undefined;
-  let scopedAgentId: string | undefined = agentId;
-  let agentName: string | undefined;
 
   for (const record of records) {
-    if (record.type === "turn") {
-      turns.push(record.data as ConversationTurn);
-      continue;
-    }
-    const meta = record.data as ConversationMetaRecord;
-    if (meta.title) title = meta.title;
-    if (meta.agentId) scopedAgentId = meta.agentId;
-    if (meta.agentName) agentName = meta.agentName;
+    turns.push(record.data);
   }
 
-  const firstTimestamp = records[0]?.timestamp ?? latestRunState?.startedAt ?? new Date().toISOString();
+  const latestRunState = options?.latestRunState;
+  const firstTimestamp =
+    options?.createdAt ??
+    records[0]?.timestamp ??
+    latestRunState?.startedAt ??
+    new Date().toISOString();
   const lastRecordTimestamp = records[records.length - 1]?.timestamp ?? firstTimestamp;
-  const lastTimestamp = latestRunState
+  const lastStateOrRecordTimestamp = latestRunState
     ? [lastRecordTimestamp, latestRunState.updatedAt].sort((left, right) => left.localeCompare(right)).at(-1) ?? lastRecordTimestamp
     : lastRecordTimestamp;
+  const lastTimestamp = options?.updatedAt && options.updatedAt.localeCompare(lastStateOrRecordTimestamp) > 0
+    ? options.updatedAt
+    : lastStateOrRecordTimestamp;
   const isInProgress = latestRunState !== undefined &&
     latestRunState.status !== "success" &&
     latestRunState.status !== "error" &&
@@ -51,11 +55,11 @@ export function assembleConversation(
 
   const conversation: Conversation = {
     sessionId,
-    title,
+    title: options?.title,
     createdAt: firstTimestamp,
     updatedAt: lastTimestamp,
-    agentId: scopedAgentId,
-    agentName,
+    agentId: options?.agentId,
+    agentName: options?.agentName,
     status: isInProgress ? "progress" : "idle",
     turns,
   };

@@ -6,13 +6,8 @@ import {
 } from "../../../src/agent/persistence/conversation-assembler.js";
 
 describe("conversation-assembler", () => {
-  it("assembles turns, meta, and in-progress run state into a conversation", () => {
+  it("assembles turns and in-progress run state into a conversation", () => {
     const records: ConversationRecord[] = [
-      {
-        type: "meta",
-        data: { title: "Test Chat", agentId: "front-desk", agentName: "Front Desk" },
-        timestamp: "2026-03-17T00:00:00.000Z",
-      },
       {
         type: "turn",
         data: {
@@ -29,14 +24,21 @@ describe("conversation-assembler", () => {
     ];
 
     const conversation = assembleConversation("session-1", records, {
-      runId: "run-2",
-      turnId: "turn-2",
-      status: "started",
-      startedAt: "2026-03-17T00:00:02.000Z",
-      updatedAt: "2026-03-17T00:00:03.000Z",
-      userMessage: "Working...",
+      title: "Test Chat",
       agentId: "front-desk",
       agentName: "Front Desk",
+      latestRunState: {
+        runId: "run-2",
+        turnId: "turn-2",
+        status: "started",
+        startedAt: "2026-03-17T00:00:02.000Z",
+        updatedAt: "2026-03-17T00:00:03.000Z",
+        userMessage: "Working...",
+        agentId: "front-desk",
+        agentName: "Front Desk",
+      },
+      createdAt: "2026-03-17T00:00:00.000Z",
+      updatedAt: "2026-03-17T00:00:03.000Z",
     });
     expect(conversation).toEqual({
       sessionId: "session-1",

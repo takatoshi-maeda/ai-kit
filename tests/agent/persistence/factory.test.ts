@@ -85,7 +85,7 @@ describe("createPersistenceBundle", () => {
     });
 
     expect(fakeClient.tableRows("custom_conversations")).toHaveLength(1);
-    expect(fakeClient.tableRows("custom_conversation_events")).toHaveLength(2);
+    expect(fakeClient.tableRows("custom_conversation_events")).toHaveLength(1);
 
     vi.doUnmock("@supabase/supabase-js");
   });
@@ -138,6 +138,6 @@ describe("createPersistenceBundle", () => {
     });
 
     expect(fakeSql.tableRows("conversations")).toHaveLength(1);
-    expect(fakeSql.tableRows("conversation_events")).toHaveLength(2);
+    expect(fakeSql.tableRows("conversation_events")).toHaveLength(1);
   });
 });

@@ -3,6 +3,7 @@ import {
   assembleConversation,
   summarizeConversation,
   type ConversationRecord,
+  type ConversationMetaRecord,
 } from "./conversation-assembler.js";
 import type {
   AgentPersistence,
@@ -28,6 +29,11 @@ interface UsageEntry {
   timestamp: string;
 }
 
+interface StoredConversationMeta extends ConversationMetaRecord {
+  createdAt: string;
+  updatedAt: string;
+}
+
 /**
  * JSONL ファイルベースの AgentPersistence 実装。
  * DataStorage 上に会話・使用量・冪等性レコードを JSONL 形式で保存する。
@@ -40,6 +46,13 @@ export class FilesystemPersistence implements AgentPersistence {
       return `${CONVERSATIONS_DIR}/${sessionId}.jsonl`;
     }
     return `${CONVERSATIONS_DIR}/${encodeURIComponent(agentId)}/${sessionId}.jsonl`;
+  }
+
+  private conversationMetaPath(sessionId: string, agentId?: string): string {
+    if (!agentId) {
+      return `${CONVERSATIONS_DIR}/${sessionId}.meta.json`;
+    }
+    return `${CONVERSATIONS_DIR}/${encodeURIComponent(agentId)}/${sessionId}.meta.json`;
   }
 
   private runStateDir(sessionId: string, agentId?: string): string {
@@ -55,10 +68,18 @@ export class FilesystemPersistence implements AgentPersistence {
 
   async readConversation(sessionId: string, agentId?: string): Promise<Conversation | null> {
     const raw = await this.storage.readText(this.conversationPath(sessionId, agentId));
+    const meta = await this.readConversationMeta(sessionId, agentId);
     const records = raw ? parseJsonl<ConversationRecord>(raw) : [];
     const latestRunState = await this.readLatestRunState(sessionId, agentId);
-    if (records.length === 0 && !latestRunState) return null;
-    return assembleConversation(sessionId, records, latestRunState, agentId);
+    if (records.length === 0 && !latestRunState && !meta) return null;
+    return assembleConversation(sessionId, records, {
+      title: meta?.title,
+      agentId: agentId ?? meta?.agentId,
+      agentName: meta?.agentName,
+      latestRunState,
+      createdAt: meta?.createdAt,
+      updatedAt: meta?.updatedAt,
+    });
   }
 
   async listConversationSummaries(
@@ -81,10 +102,14 @@ export class FilesystemPersistence implements AgentPersistence {
     const exists = await this.storage.stat(
       this.conversationPath(sessionId, agentId),
     );
+    const metaExists = await this.storage.stat(this.conversationMetaPath(sessionId, agentId));
     const runStateIds = await this.listRunStateIds(sessionId, agentId);
-    if (!exists && runStateIds.length === 0) return false;
+    if (!exists && !metaExists && runStateIds.length === 0) return false;
     if (exists) {
       await this.storage.deleteFile(this.conversationPath(sessionId, agentId));
+    }
+    if (metaExists) {
+      await this.storage.deleteFile(this.conversationMetaPath(sessionId, agentId));
     }
     for (const runId of runStateIds) {
       await this.storage.deleteFile(this.runStatePath(sessionId, runId, agentId));
@@ -104,22 +129,12 @@ export class FilesystemPersistence implements AgentPersistence {
     if (existingConversation?.agentId && conversationAgentId && existingConversation.agentId !== conversationAgentId) {
       throw new Error(`Conversation agent mismatch for session "${sessionId}"`);
     }
-
-    if (title || conversationAgentId || turn.agentName) {
-      const metaRecord: ConversationRecord = {
-        type: "meta",
-        data: {
-          ...(title ? { title } : {}),
-          ...(conversationAgentId ? { agentId: conversationAgentId } : {}),
-          ...(turn.agentName ? { agentName: turn.agentName } : {}),
-        },
-        timestamp,
-      };
-      await this.storage.appendText(
-        this.conversationPath(sessionId, conversationAgentId),
-        JSON.stringify(metaRecord) + "\n",
-      );
-    }
+    await this.writeConversationMeta(sessionId, conversationAgentId, {
+      title,
+      agentId: conversationAgentId,
+      agentName: turn.agentName,
+      timestamp,
+    });
 
     const record: ConversationRecord = {
       type: "turn",
@@ -138,21 +153,11 @@ export class FilesystemPersistence implements AgentPersistence {
     if (existingConversation?.agentId && conversationAgentId && existingConversation.agentId !== conversationAgentId) {
       throw new Error(`Conversation agent mismatch for session "${sessionId}"`);
     }
-
-    if (!existingConversation && (conversationAgentId || state.agentName)) {
-      const metaRecord: ConversationRecord = {
-        type: "meta",
-        data: {
-          ...(conversationAgentId ? { agentId: conversationAgentId } : {}),
-          ...(state.agentName ? { agentName: state.agentName } : {}),
-        },
-        timestamp: new Date().toISOString(),
-      };
-      await this.storage.appendText(
-        this.conversationPath(sessionId, conversationAgentId),
-        JSON.stringify(metaRecord) + "\n",
-      );
-    }
+    await this.writeConversationMeta(sessionId, conversationAgentId, {
+      agentId: conversationAgentId,
+      agentName: state.agentName,
+      timestamp: new Date().toISOString(),
+    });
 
     await this.storage.writeText(
       this.runStatePath(sessionId, state.runId, conversationAgentId),
@@ -274,30 +279,30 @@ export class FilesystemPersistence implements AgentPersistence {
   ): Promise<Array<{ sessionId: string; agentId?: string }>> {
     if (agentId) {
       const files = await this.storage.listFiles(`${CONVERSATIONS_DIR}/${encodeURIComponent(agentId)}`);
-      return files
-        .filter((file) => file.endsWith(".jsonl"))
-        .map((file) => ({ sessionId: file.replace(/\.jsonl$/u, ""), agentId }));
+      return uniqueConversationCandidates(files
+        .filter((file) => file.endsWith(".jsonl") || file.endsWith(".meta.json"))
+        .map((file) => ({ sessionId: toSessionIdFromConversationFile(file), agentId })));
     }
 
     const entries = await this.storage.listFiles(CONVERSATIONS_DIR);
     const candidates: Array<{ sessionId: string; agentId?: string }> = [];
     for (const entry of entries) {
-      if (entry.endsWith(".jsonl")) {
-        candidates.push({ sessionId: entry.replace(/\.jsonl$/u, "") });
+      if (entry.endsWith(".jsonl") || entry.endsWith(".meta.json")) {
+        candidates.push({ sessionId: toSessionIdFromConversationFile(entry) });
         continue;
       }
       const nestedFiles = await this.storage.listFiles(`${CONVERSATIONS_DIR}/${entry}`);
       for (const file of nestedFiles) {
-        if (!file.endsWith(".jsonl")) {
+        if (!file.endsWith(".jsonl") && !file.endsWith(".meta.json")) {
           continue;
         }
         candidates.push({
-          sessionId: file.replace(/\.jsonl$/u, ""),
+          sessionId: toSessionIdFromConversationFile(file),
           agentId: decodeURIComponent(entry),
         });
       }
     }
-    return candidates;
+    return uniqueConversationCandidates(candidates);
   }
 
   private async listRunStateIds(sessionId: string, agentId?: string): Promise<string[]> {
@@ -320,6 +325,41 @@ export class FilesystemPersistence implements AgentPersistence {
     }
     return latest;
   }
+
+  private async readConversationMeta(
+    sessionId: string,
+    agentId?: string,
+  ): Promise<StoredConversationMeta | undefined> {
+    const raw = await this.storage.readText(this.conversationMetaPath(sessionId, agentId));
+    if (!raw) {
+      return undefined;
+    }
+    return JSON.parse(raw) as StoredConversationMeta;
+  }
+
+  private async writeConversationMeta(
+    sessionId: string,
+    agentId: string | undefined,
+    options: {
+      title?: string;
+      agentId?: string;
+      agentName?: string;
+      timestamp: string;
+    },
+  ): Promise<void> {
+    const existing = await this.readConversationMeta(sessionId, agentId);
+    const next: StoredConversationMeta = {
+      title: options.title ?? existing?.title,
+      agentId: options.agentId ?? existing?.agentId,
+      agentName: options.agentName ?? existing?.agentName,
+      createdAt: existing?.createdAt ?? options.timestamp,
+      updatedAt: options.timestamp,
+    };
+    await this.storage.writeText(
+      this.conversationMetaPath(sessionId, agentId),
+      JSON.stringify(next),
+    );
+  }
 }
 
 function parseJsonl<T>(raw: string): T[] {
@@ -327,4 +367,22 @@ function parseJsonl<T>(raw: string): T[] {
     .split("\n")
     .filter((line) => line.trim().length > 0)
     .map((line) => JSON.parse(line) as T);
+}
+
+function toSessionIdFromConversationFile(file: string): string {
+  return file.replace(/\.meta\.json$/u, "").replace(/\.jsonl$/u, "");
+}
+
+function uniqueConversationCandidates(
+  candidates: Array<{ sessionId: string; agentId?: string }>,
+): Array<{ sessionId: string; agentId?: string }> {
+  const seen = new Set<string>();
+  return candidates.filter((candidate) => {
+    const key = `${candidate.agentId ?? ""}:${candidate.sessionId}`;
+    if (seen.has(key)) {
+      return false;
+    }
+    seen.add(key);
+    return true;
+  });
 }
