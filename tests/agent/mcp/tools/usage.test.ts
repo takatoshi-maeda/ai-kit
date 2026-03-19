@@ -11,6 +11,7 @@ function stubPersistence(
     deleteConversation: vi.fn(async () => false),
     appendConversationTurn: vi.fn(async () => {}),
     appendRunState: vi.fn(async () => {}),
+    deleteRunState: vi.fn(async () => {}),
     appendInputMessageHistory: vi.fn(async () => {}),
     listInputMessageHistory: vi.fn(async () => []),
     appendUsage: vi.fn(async () => {}),

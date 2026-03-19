@@ -242,11 +242,16 @@ export function createFakeSupabaseClient(): FakeSupabaseClient {
     }
     const eventsTable = table.replace(/conversations$/, "conversation_events");
     const eventState = tables.get(eventsTable);
-    if (!eventState) {
-      return;
+    if (eventState) {
+      const conversationIds = new Set(rows.map((row) => row.id));
+      eventState.rows = eventState.rows.filter((row) => !conversationIds.has(row.conversation_id));
     }
-    const conversationIds = new Set(rows.map((row) => row.id));
-    eventState.rows = eventState.rows.filter((row) => !conversationIds.has(row.conversation_id));
+    const runStatesTable = table.replace(/conversations$/, "conversation_run_states");
+    const runStateState = tables.get(runStatesTable);
+    if (runStateState) {
+      const conversationIds = new Set(rows.map((row) => row.id));
+      runStateState.rows = runStateState.rows.filter((row) => !conversationIds.has(row.conversation_id));
+    }
   }
 
   function getTable(table: string): TableState {

@@ -40,6 +40,22 @@ interface ConversationEventRow {
   created_at: string;
 }
 
+interface ConversationRunStateRow {
+  conversation_id: number;
+  run_id: string;
+  turn_id: string | null;
+  status: string;
+  started_at: string;
+  updated_at: string;
+  user_message: string | null;
+  user_content: RunState["userContent"] | null;
+  assistant_message: string | null;
+  timeline: RunState["timeline"] | null;
+  agent_id: string | null;
+  agent_name: string | null;
+  created_at: string;
+}
+
 interface InputHistoryRow {
   id?: number;
   app_name: string;
@@ -119,13 +135,23 @@ export class SupabasePersistence implements AgentPersistence {
     if (error) {
       throw new Error(formatSupabaseError(error));
     }
-
-    const records = asArray<ConversationEventRow>(data).map<ConversationRecord>((row) => ({
-      type: row.event_type,
-      data: row.data,
-      timestamp: row.event_timestamp,
-    }));
-    return assembleConversation(sessionId, records, agentId);
+    const runStateResult = await this.client
+      .from<ConversationRunStateRow>(this.tableName("conversation_run_states"))
+      .select("*")
+      .eq("conversation_id", conversation.id)
+      .order("updated_at", { ascending: false })
+      .limit(1);
+    if (runStateResult.error) {
+      throw new Error(formatSupabaseError(runStateResult.error));
+    }
+    const records = asArray<ConversationEventRow>(data)
+      .filter((row) => row.event_type === "meta" || row.event_type === "turn")
+      .map<ConversationRecord>((row) => ({
+        type: row.event_type,
+        data: row.data,
+        timestamp: row.event_timestamp,
+      }));
+    return assembleConversation(sessionId, records, toRunState(asArray(runStateResult.data)[0]), agentId);
   }
 
   async listConversationSummaries(
@@ -235,11 +261,22 @@ export class SupabasePersistence implements AgentPersistence {
       });
     }
 
-    await this.insertEvent(conversationId, {
-      type: "run_state",
-      data: state,
-      timestamp,
-    });
+    await this.upsertRunStateRecord(conversationId, state, timestamp);
+  }
+
+  async deleteRunState(sessionId: string, runId: string, agentId?: string): Promise<void> {
+    const conversation = await this.findConversation(sessionId, agentId);
+    if (!conversation) {
+      return;
+    }
+    const { error } = await this.client
+      .from<ConversationRunStateRow>(this.tableName("conversation_run_states"))
+      .delete()
+      .eq("conversation_id", conversation.id)
+      .eq("run_id", runId);
+    if (error) {
+      throw new Error(formatSupabaseError(error));
+    }
   }
 
   async appendInputMessageHistory(
@@ -482,6 +519,36 @@ export class SupabasePersistence implements AgentPersistence {
     }
   }
 
+  private async upsertRunStateRecord(
+    conversationId: number,
+    state: RunState,
+    timestamp: string,
+  ): Promise<void> {
+    const { error } = await this.client
+      .from<ConversationRunStateRow>(this.tableName("conversation_run_states"))
+      .upsert({
+        conversation_id: conversationId,
+        run_id: state.runId,
+        turn_id: state.turnId ?? null,
+        status: state.status,
+        started_at: state.startedAt,
+        updated_at: state.updatedAt,
+        user_message: state.userMessage ?? null,
+        user_content: state.userContent ?? null,
+        assistant_message: state.assistantMessage ?? null,
+        timeline: state.timeline ?? null,
+        agent_id: state.agentId ?? null,
+        agent_name: state.agentName ?? null,
+        created_at: timestamp,
+      }, {
+        onConflict: "conversation_id,run_id",
+        ignoreDuplicates: false,
+      });
+    if (error) {
+      throw new Error(formatSupabaseError(error));
+    }
+  }
+
   private async findConversation(
     sessionId: string,
     agentId?: string,
@@ -524,4 +591,23 @@ function asArray<T>(value: T[] | T | null): T[] {
     return value;
   }
   return value ? [value] : [];
+}
+
+function toRunState(row?: ConversationRunStateRow): RunState | undefined {
+  if (!row) {
+    return undefined;
+  }
+  return {
+    runId: row.run_id,
+    turnId: row.turn_id ?? undefined,
+    status: row.status,
+    startedAt: row.started_at,
+    updatedAt: row.updated_at,
+    userMessage: row.user_message ?? undefined,
+    userContent: row.user_content ?? undefined,
+    assistantMessage: row.assistant_message ?? undefined,
+    timeline: row.timeline ?? undefined,
+    agentId: row.agent_id ?? undefined,
+    agentName: row.agent_name ?? undefined,
+  };
 }

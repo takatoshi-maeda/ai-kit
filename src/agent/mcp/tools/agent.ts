@@ -396,19 +396,7 @@ export async function handleAgentRun(
     };
     await deps.persistence.appendConversationTurn(sessionId, turn, title);
 
-    // Update run state
-    await deps.persistence.appendRunState(sessionId, {
-      runId,
-      turnId,
-      status: "success",
-      startedAt,
-      updatedAt: new Date().toISOString(),
-      userMessage: userMessagePreview,
-      userContent: userInput,
-      assistantMessage: result.message,
-      timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
-      agentId,
-    });
+    await deps.persistence.deleteRunState(sessionId, runId, agentId);
   } catch (err) {
     const errorMessage =
       err instanceof Error ? err.message : String(err);
@@ -440,18 +428,7 @@ export async function handleAgentRun(
     };
     await deps.persistence.appendConversationTurn(sessionId, turn, title);
 
-    // Update run state
-    await deps.persistence.appendRunState(sessionId, {
-      runId,
-      turnId,
-      status: "error",
-      startedAt,
-      updatedAt: new Date().toISOString(),
-      userMessage: userMessagePreview,
-      userContent: userInput,
-      timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
-      agentId,
-    });
+    await deps.persistence.deleteRunState(sessionId, runId, agentId);
 
     if (enableStream && deps.sendNotification) {
       await deps.sendNotification("agent/stream-response", {

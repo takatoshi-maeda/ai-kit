@@ -53,6 +53,7 @@ describe("runDoctorCommand", () => {
         columns: ["id", "app_name", "session_id"],
       },
       "public.ai_kit_conversation_events": false,
+      "public.ai_kit_conversation_run_states": false,
       "public.ai_kit_input_history": false,
       "public.ai_kit_usage_entries": true,
       "public.ai_kit_idempotency_records": true,
@@ -83,6 +84,7 @@ describe("runDoctorCommand", () => {
         expect.objectContaining({ name: "table:public.ai_kit_versions", ok: true }),
         expect.objectContaining({ name: "table:public.ai_kit_conversations", ok: false }),
         expect.objectContaining({ name: "table:public.ai_kit_conversation_events", ok: false }),
+        expect.objectContaining({ name: "table:public.ai_kit_conversation_run_states", ok: false }),
         expect.objectContaining({ name: "table:public.ai_kit_input_history", ok: false }),
       ]),
     );
@@ -90,6 +92,7 @@ describe("runDoctorCommand", () => {
       expect.arrayContaining([
         expect.objectContaining({ name: "20260317000000", ok: true, detail: "applied" }),
         expect.objectContaining({ name: "20260318000000", ok: false, detail: "pending" }),
+        expect.objectContaining({ name: "20260319000000", ok: false, detail: "pending" }),
       ]),
     );
   });
@@ -145,6 +148,7 @@ describe("runDoctorCommand", () => {
         expect.objectContaining({ name: "table:public.ai_kit_versions", ok: true }),
         expect.objectContaining({ name: "table:public.ai_kit_conversations", ok: false }),
         expect.objectContaining({ name: "table:public.ai_kit_conversation_events", ok: false }),
+        expect.objectContaining({ name: "table:public.ai_kit_conversation_run_states", ok: true }),
         expect.objectContaining({ name: expect.stringContaining("assetDir:"), ok: true }),
       ]),
     );
@@ -152,6 +156,7 @@ describe("runDoctorCommand", () => {
       expect.arrayContaining([
         expect.objectContaining({ name: "20260317000000", ok: true, detail: "applied" }),
         expect.objectContaining({ name: "20260318000000", ok: false, detail: "pending" }),
+        expect.objectContaining({ name: "20260319000000", ok: false, detail: "pending" }),
       ]),
     );
   });

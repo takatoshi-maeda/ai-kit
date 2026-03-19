@@ -40,6 +40,22 @@ interface ConversationEventRow extends Record<string, unknown> {
   created_at: string;
 }
 
+interface ConversationRunStateRow extends Record<string, unknown> {
+  conversation_id: number;
+  run_id: string;
+  turn_id: string | null;
+  status: string;
+  started_at: string;
+  updated_at: string;
+  user_message: string | null;
+  user_content: RunState["userContent"] | null;
+  assistant_message: string | null;
+  timeline: RunState["timeline"] | null;
+  agent_id: string | null;
+  agent_name: string | null;
+  created_at: string;
+}
+
 interface InputHistoryRow extends Record<string, unknown> {
   entry: string;
 }
@@ -108,7 +124,19 @@ export class PostgresPersistence implements AgentPersistence {
         select event_type, event_timestamp, data
         from ${this.table("conversation_events")}
         where conversation_id = $1
+          and event_type in ('meta', 'turn')
         order by id asc
+      `,
+      [conversation.id],
+    );
+    const runStateRows = await this.query<ConversationRunStateRow>(
+      this.sql,
+      `
+        select *
+        from ${this.table("conversation_run_states")}
+        where conversation_id = $1
+        order by updated_at desc
+        limit 1
       `,
       [conversation.id],
     );
@@ -118,7 +146,7 @@ export class PostgresPersistence implements AgentPersistence {
       data: row.data,
       timestamp: normalizeTimestamp(row.event_timestamp),
     }));
-    return assembleConversation(sessionId, records, agentId);
+    return assembleConversation(sessionId, records, toRunState(runStateRows[0]), agentId);
   }
 
   async listConversationSummaries(
@@ -231,12 +259,24 @@ export class PostgresPersistence implements AgentPersistence {
         });
       }
 
-      await this.insertEvent(tx, conversationId, {
-        type: "run_state",
-        data: state,
-        timestamp,
-      });
+      await this.upsertRunStateRecord(tx, conversationId, state, timestamp);
     });
+  }
+
+  async deleteRunState(sessionId: string, runId: string, agentId?: string): Promise<void> {
+    const conversation = await this.findConversation(this.sql, sessionId, agentId);
+    if (!conversation) {
+      return;
+    }
+    await this.query(
+      this.sql,
+      `
+        delete from ${this.table("conversation_run_states")}
+        where conversation_id = $1
+          and run_id = $2
+      `,
+      [conversation.id, runId],
+    );
   }
 
   async appendInputMessageHistory(
@@ -491,6 +531,51 @@ export class PostgresPersistence implements AgentPersistence {
     );
   }
 
+  private async upsertRunStateRecord(
+    sql: PostgresSqlLike,
+    conversationId: number,
+    state: RunState,
+    timestamp: string,
+  ): Promise<void> {
+    await this.query(
+      sql,
+      `
+        insert into ${this.table("conversation_run_states")} (
+          conversation_id, run_id, turn_id, status, started_at, updated_at,
+          user_message, user_content, assistant_message, timeline,
+          agent_id, agent_name, created_at
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        on conflict (conversation_id, run_id)
+        do update set
+          turn_id = excluded.turn_id,
+          status = excluded.status,
+          started_at = excluded.started_at,
+          updated_at = excluded.updated_at,
+          user_message = excluded.user_message,
+          user_content = excluded.user_content,
+          assistant_message = excluded.assistant_message,
+          timeline = excluded.timeline,
+          agent_id = excluded.agent_id,
+          agent_name = excluded.agent_name
+      `,
+      [
+        conversationId,
+        state.runId,
+        state.turnId ?? null,
+        state.status,
+        state.startedAt,
+        state.updatedAt,
+        state.userMessage ?? null,
+        state.userContent ?? null,
+        state.assistantMessage ?? null,
+        state.timeline ?? null,
+        state.agentId ?? null,
+        state.agentName ?? null,
+        timestamp,
+      ],
+    );
+  }
+
   private async findConversation(
     sql: PostgresSqlLike,
     sessionId: string,
@@ -557,6 +642,25 @@ function normalizeNumericId(value: unknown): number | null {
     return Number.isSafeInteger(asNumber) ? asNumber : null;
   }
   return null;
+}
+
+function toRunState(row?: ConversationRunStateRow): RunState | undefined {
+  if (!row) {
+    return undefined;
+  }
+  return {
+    runId: row.run_id,
+    turnId: row.turn_id ?? undefined,
+    status: row.status,
+    startedAt: normalizeTimestamp(row.started_at),
+    updatedAt: normalizeTimestamp(row.updated_at),
+    userMessage: row.user_message ?? undefined,
+    userContent: row.user_content ?? undefined,
+    assistantMessage: row.assistant_message ?? undefined,
+    timeline: row.timeline ?? undefined,
+    agentId: row.agent_id ?? undefined,
+    agentName: row.agent_name ?? undefined,
+  };
 }
 
 function normalizeTimestamp(value: unknown): string {

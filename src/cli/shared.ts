@@ -143,6 +143,7 @@ function listPersistenceTables(tablePrefix: string): string[] {
     `${tablePrefix}versions`,
     `${tablePrefix}conversations`,
     `${tablePrefix}conversation_events`,
+    `${tablePrefix}conversation_run_states`,
     `${tablePrefix}input_history`,
     `${tablePrefix}usage_entries`,
     `${tablePrefix}idempotency_records`,
@@ -183,6 +184,24 @@ function requiredPersistenceTableColumns(
         "event_type",
         "event_timestamp",
         "data",
+        "created_at",
+      ],
+    },
+    {
+      table: `${tablePrefix}conversation_run_states`,
+      columns: [
+        "conversation_id",
+        "run_id",
+        "turn_id",
+        "status",
+        "started_at",
+        "updated_at",
+        "user_message",
+        "user_content",
+        "assistant_message",
+        "timeline",
+        "agent_id",
+        "agent_name",
         "created_at",
       ],
     },
@@ -643,6 +662,10 @@ function buildPersistenceMigrations(
       version: "20260318000000",
       statements: buildUserIdMigrationStatements(schema, tablePrefix),
     },
+    {
+      version: "20260319000000",
+      statements: buildRunStateSnapshotMigrationStatements(schema, tablePrefix),
+    },
   ];
 }
 
@@ -762,6 +785,32 @@ function buildUserIdMigrationStatements(schema: string, tablePrefix: string): st
     `alter table ${idempotency} drop constraint if exists ${idempotencyLegacyConstraint};`,
     `create unique index if not exists ${quoteIdentifier(`${tablePrefix}idempotency_identity_idx`)}`,
     `  on ${idempotency} (app_name, user_id, idempotency_key);`,
+  ];
+}
+
+function buildRunStateSnapshotMigrationStatements(schema: string, tablePrefix: string): string[] {
+  const conversations = qualifiedTable(schema, `${tablePrefix}conversations`);
+  const runStates = qualifiedTable(schema, `${tablePrefix}conversation_run_states`);
+  return [
+    `create table if not exists ${runStates} (`,
+    "  conversation_id bigint not null,",
+    "  run_id text not null,",
+    "  turn_id text null,",
+    "  status text not null,",
+    "  started_at timestamptz not null,",
+    "  updated_at timestamptz not null,",
+    "  user_message text null,",
+    "  user_content jsonb null,",
+    "  assistant_message text null,",
+    "  timeline jsonb null,",
+    "  agent_id text null,",
+    "  agent_name text null,",
+    "  created_at timestamptz not null,",
+    `  primary key (conversation_id, run_id),`,
+    `  foreign key (conversation_id) references ${conversations} (id) on delete cascade`,
+    ");",
+    `create index if not exists ${quoteIdentifier(`${tablePrefix}conversation_run_states_conversation_updated_idx`)}`,
+    `  on ${runStates} (conversation_id, updated_at desc);`,
   ];
 }
 

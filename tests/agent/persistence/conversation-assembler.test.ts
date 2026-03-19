@@ -26,23 +26,18 @@ describe("conversation-assembler", () => {
         },
         timestamp: "2026-03-17T00:00:01.000Z",
       },
-      {
-        type: "run_state",
-        data: {
-          runId: "run-2",
-          turnId: "turn-2",
-          status: "started",
-          startedAt: "2026-03-17T00:00:02.000Z",
-          updatedAt: "2026-03-17T00:00:03.000Z",
-          userMessage: "Working...",
-          agentId: "front-desk",
-          agentName: "Front Desk",
-        },
-        timestamp: "2026-03-17T00:00:03.000Z",
-      },
     ];
 
-    const conversation = assembleConversation("session-1", records);
+    const conversation = assembleConversation("session-1", records, {
+      runId: "run-2",
+      turnId: "turn-2",
+      status: "started",
+      startedAt: "2026-03-17T00:00:02.000Z",
+      updatedAt: "2026-03-17T00:00:03.000Z",
+      userMessage: "Working...",
+      agentId: "front-desk",
+      agentName: "Front Desk",
+    });
     expect(conversation).toEqual({
       sessionId: "session-1",
       title: "Test Chat",

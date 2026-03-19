@@ -15,6 +15,7 @@ import type {
 } from "./types.js";
 
 const CONVERSATIONS_DIR = "conversations";
+const RUN_STATES_DIR = "run-states";
 const USAGE_FILE = "usage.jsonl";
 const INPUT_HISTORY_FILE = "input-history.jsonl";
 const IDEMPOTENCY_DIR = "idempotency";
@@ -41,12 +42,23 @@ export class FilesystemPersistence implements AgentPersistence {
     return `${CONVERSATIONS_DIR}/${encodeURIComponent(agentId)}/${sessionId}.jsonl`;
   }
 
+  private runStateDir(sessionId: string, agentId?: string): string {
+    if (!agentId) {
+      return `${RUN_STATES_DIR}/${sessionId}`;
+    }
+    return `${RUN_STATES_DIR}/${encodeURIComponent(agentId)}/${sessionId}`;
+  }
+
+  private runStatePath(sessionId: string, runId: string, agentId?: string): string {
+    return `${this.runStateDir(sessionId, agentId)}/${runId}.json`;
+  }
+
   async readConversation(sessionId: string, agentId?: string): Promise<Conversation | null> {
     const raw = await this.storage.readText(this.conversationPath(sessionId, agentId));
-    if (!raw) return null;
-
-    const records = parseJsonl<ConversationRecord>(raw);
-    return assembleConversation(sessionId, records, agentId);
+    const records = raw ? parseJsonl<ConversationRecord>(raw) : [];
+    const latestRunState = await this.readLatestRunState(sessionId, agentId);
+    if (records.length === 0 && !latestRunState) return null;
+    return assembleConversation(sessionId, records, latestRunState, agentId);
   }
 
   async listConversationSummaries(
@@ -69,8 +81,14 @@ export class FilesystemPersistence implements AgentPersistence {
     const exists = await this.storage.stat(
       this.conversationPath(sessionId, agentId),
     );
-    if (!exists) return false;
-    await this.storage.deleteFile(this.conversationPath(sessionId, agentId));
+    const runStateIds = await this.listRunStateIds(sessionId, agentId);
+    if (!exists && runStateIds.length === 0) return false;
+    if (exists) {
+      await this.storage.deleteFile(this.conversationPath(sessionId, agentId));
+    }
+    for (const runId of runStateIds) {
+      await this.storage.deleteFile(this.runStatePath(sessionId, runId, agentId));
+    }
     return true;
   }
 
@@ -136,15 +154,17 @@ export class FilesystemPersistence implements AgentPersistence {
       );
     }
 
-    const record: ConversationRecord = {
-      type: "run_state",
-      data: state,
-      timestamp: new Date().toISOString(),
-    };
-    await this.storage.appendText(
-      this.conversationPath(sessionId, conversationAgentId),
-      JSON.stringify(record) + "\n",
+    await this.storage.writeText(
+      this.runStatePath(sessionId, state.runId, conversationAgentId),
+      JSON.stringify(state),
     );
+  }
+
+  async deleteRunState(sessionId: string, runId: string, agentId?: string): Promise<void> {
+    const file = this.runStatePath(sessionId, runId, agentId);
+    const exists = await this.storage.stat(file);
+    if (!exists) return;
+    await this.storage.deleteFile(file);
   }
 
   async appendInputMessageHistory(
@@ -278,6 +298,27 @@ export class FilesystemPersistence implements AgentPersistence {
       }
     }
     return candidates;
+  }
+
+  private async listRunStateIds(sessionId: string, agentId?: string): Promise<string[]> {
+    const entries = await this.storage.listFiles(this.runStateDir(sessionId, agentId));
+    return entries
+      .filter((file) => file.endsWith(".json"))
+      .map((file) => file.replace(/\.json$/u, ""));
+  }
+
+  private async readLatestRunState(sessionId: string, agentId?: string): Promise<RunState | undefined> {
+    const runIds = await this.listRunStateIds(sessionId, agentId);
+    let latest: RunState | undefined;
+    for (const runId of runIds) {
+      const raw = await this.storage.readText(this.runStatePath(sessionId, runId, agentId));
+      if (!raw) continue;
+      const parsed = JSON.parse(raw) as RunState;
+      if (!latest || parsed.updatedAt.localeCompare(latest.updatedAt) > 0) {
+        latest = parsed;
+      }
+    }
+    return latest;
   }
 }
 

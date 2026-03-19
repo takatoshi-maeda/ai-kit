@@ -12,29 +12,25 @@ export interface ConversationMetaRecord {
 }
 
 export interface ConversationRecord {
-  type: "turn" | "run_state" | "meta";
-  data: ConversationTurn | RunState | ConversationMetaRecord;
+  type: "turn" | "meta";
+  data: ConversationTurn | ConversationMetaRecord;
   timestamp: string;
 }
 
 export function assembleConversation(
   sessionId: string,
   records: ConversationRecord[],
+  latestRunState?: RunState,
   agentId?: string,
 ): Conversation {
   const turns: ConversationTurn[] = [];
   let title: string | undefined;
   let scopedAgentId: string | undefined = agentId;
   let agentName: string | undefined;
-  let latestRunState: RunState | undefined;
 
   for (const record of records) {
     if (record.type === "turn") {
       turns.push(record.data as ConversationTurn);
-      continue;
-    }
-    if (record.type === "run_state") {
-      latestRunState = record.data as RunState;
       continue;
     }
     const meta = record.data as ConversationMetaRecord;
@@ -43,8 +39,11 @@ export function assembleConversation(
     if (meta.agentName) agentName = meta.agentName;
   }
 
-  const firstTimestamp = records[0]?.timestamp ?? new Date().toISOString();
-  const lastTimestamp = records[records.length - 1]?.timestamp ?? firstTimestamp;
+  const firstTimestamp = records[0]?.timestamp ?? latestRunState?.startedAt ?? new Date().toISOString();
+  const lastRecordTimestamp = records[records.length - 1]?.timestamp ?? firstTimestamp;
+  const lastTimestamp = latestRunState
+    ? [lastRecordTimestamp, latestRunState.updatedAt].sort((left, right) => left.localeCompare(right)).at(-1) ?? lastRecordTimestamp
+    : lastRecordTimestamp;
   const isInProgress = latestRunState !== undefined &&
     latestRunState.status !== "success" &&
     latestRunState.status !== "error" &&

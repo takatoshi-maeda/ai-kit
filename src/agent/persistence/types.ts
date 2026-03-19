@@ -142,6 +142,7 @@ export interface AgentPersistence {
     title?: string,
   ): Promise<void>;
   appendRunState(sessionId: string, state: RunState): Promise<void>;
+  deleteRunState(sessionId: string, runId: string, agentId?: string): Promise<void>;
 
   /** 入力メッセージ履歴 */
   appendInputMessageHistory(

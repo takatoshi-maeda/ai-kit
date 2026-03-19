@@ -6,6 +6,7 @@ type TableName =
   | "versions"
   | "conversations"
   | "conversation_events"
+  | "conversation_run_states"
   | "input_history"
   | "usage_entries"
   | "idempotency_records";
@@ -14,6 +15,7 @@ interface FakePostgresState {
   versions: Row[];
   conversations: Row[];
   conversation_events: Row[];
+  conversation_run_states: Row[];
   input_history: Row[];
   usage_entries: Row[];
   idempotency_records: Row[];
@@ -34,6 +36,7 @@ export function createFakePostgresSql(
     versions: [],
     conversations: [],
     conversation_events: [],
+    conversation_run_states: [],
     input_history: [],
     usage_entries: [],
     idempotency_records: [],
@@ -107,6 +110,15 @@ export function createFakePostgresSql(
           .map((row) => withDateTimestamps(row, options.dateTimestamps)) as RowType[];
       }
 
+      if (normalized.startsWith("select *") && table === "conversation_run_states") {
+        const [conversationIdParam] = params;
+        return state.conversation_run_states
+          .filter((row) => row.conversation_id === conversationIdParam)
+          .sort((left, right) => String(right.updated_at).localeCompare(String(left.updated_at)))
+          .slice(0, 1)
+          .map((row) => withDateTimestamps(row, options.dateTimestamps)) as RowType[];
+      }
+
       if (normalized.startsWith("select session_id, agent_id, updated_at") && table === "conversations") {
         const [appName, userId, maybeScope, maybeLimit] = params;
         const hasScope = normalized.includes("and agent_scope =");
@@ -132,6 +144,7 @@ export function createFakePostgresSql(
         state.conversations = state.conversations.filter((row) => !deleted.includes(row));
         const deletedIds = new Set(deleted.map((row) => row.id));
         state.conversation_events = state.conversation_events.filter((row) => !deletedIds.has(row.conversation_id));
+        state.conversation_run_states = state.conversation_run_states.filter((row) => !deletedIds.has(row.conversation_id));
         return deleted.map((row) => ({ id: row.id })) as RowType[];
       }
 
@@ -200,6 +213,67 @@ export function createFakePostgresSql(
           data,
           created_at: createdAt,
         });
+        return [];
+      }
+
+      if (normalized.startsWith("insert into") && table === "conversation_run_states") {
+        const [
+          conversationIdParam,
+          runId,
+          turnId,
+          status,
+          startedAt,
+          updatedAt,
+          userMessage,
+          userContent,
+          assistantMessage,
+          timeline,
+          agentId,
+          agentName,
+          createdAt,
+        ] = params;
+        const existing = state.conversation_run_states.find((row) =>
+          row.conversation_id === conversationIdParam &&
+          row.run_id === runId
+        );
+        if (existing) {
+          Object.assign(existing, {
+            turn_id: turnId,
+            status,
+            started_at: startedAt,
+            updated_at: updatedAt,
+            user_message: userMessage,
+            user_content: userContent,
+            assistant_message: assistantMessage,
+            timeline,
+            agent_id: agentId,
+            agent_name: agentName,
+          });
+          return [];
+        }
+        state.conversation_run_states.push({
+          conversation_id: conversationIdParam,
+          run_id: runId,
+          turn_id: turnId,
+          status,
+          started_at: startedAt,
+          updated_at: updatedAt,
+          user_message: userMessage,
+          user_content: userContent,
+          assistant_message: assistantMessage,
+          timeline,
+          agent_id: agentId,
+          agent_name: agentName,
+          created_at: createdAt,
+        });
+        return [];
+      }
+
+      if (normalized.startsWith("delete from") && table === "conversation_run_states") {
+        const [conversationIdParam, runId] = params;
+        state.conversation_run_states = state.conversation_run_states.filter((row) =>
+          !(row.conversation_id === conversationIdParam && row.run_id === runId)
+        );
         return [];
       }
 
@@ -353,6 +427,7 @@ function detectTable(query: string): TableName | null {
   if (tableName.endsWith("conversations")) return "conversations";
   if (tableName.endsWith("versions")) return "versions";
   if (tableName.endsWith("conversation_events")) return "conversation_events";
+  if (tableName.endsWith("conversation_run_states")) return "conversation_run_states";
   if (tableName.endsWith("input_history")) return "input_history";
   if (tableName.endsWith("usage_entries")) return "usage_entries";
   if (tableName.endsWith("idempotency_records")) return "idempotency_records";
