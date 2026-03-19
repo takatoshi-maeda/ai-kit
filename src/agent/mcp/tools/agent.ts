@@ -266,14 +266,23 @@ export async function handleAgentRun(
 
   // Create agent context and run
   const entry = deps.registry.get(agentId);
+  const existingConversation = await deps.persistence.readConversation(sessionId, agentId);
+  const persistedPreviousResponseId = findLatestResponseId(existingConversation?.turns ?? []);
+  const history = new InMemoryHistory();
   const context = new AgentContextImpl({
-    history: new InMemoryHistory(),
+    history,
     sessionId,
     auth: deps.authContext,
     selectedAgentName: agentId,
   });
-
   const agent = entry.create(context, agentParams);
+  const provider = resolveAgentProvider(agent);
+  if (provider !== "openai") {
+    await hydrateHistoryFromPersistence(deps.persistence, history, sessionId, agentId);
+  }
+  if (provider === "openai" && persistedPreviousResponseId) {
+    context.metadata.set("previousResponseId", persistedPreviousResponseId);
+  }
 
   let result: AgentRunResult;
 
@@ -320,8 +329,8 @@ export async function handleAgentRun(
         sessionId,
         runId,
         turnId,
-        status: "success",
-        responseId: agentResult.responseId ?? undefined,
+      status: "success",
+      responseId: agentResult.responseId ?? undefined,
         message: agentResult.content ?? "",
         agentId,
         idempotencyKey,
@@ -355,8 +364,8 @@ export async function handleAgentRun(
         sessionId,
         runId,
         turnId,
-        status: "success",
-        responseId: agentResult.responseId ?? undefined,
+      status: "success",
+      responseId: agentResult.responseId ?? undefined,
         message: agentResult.content ?? "",
         agentId,
         idempotencyKey,
@@ -380,6 +389,7 @@ export async function handleAgentRun(
       userMessage: userMessagePreview,
       userContent: userInput,
       assistantMessage: result.message,
+      responseId: result.responseId,
       status: "success",
       timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
       agentId,
@@ -422,6 +432,7 @@ export async function handleAgentRun(
       userMessage: userMessagePreview,
       userContent: userInput,
       assistantMessage: "",
+      responseId: undefined,
       status: "error",
       errorMessage,
       timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
@@ -813,6 +824,69 @@ function resolveUserInput(
   message: AgentRunParams["message"],
 ): string | ContentPart[] | undefined {
   return input ?? message;
+}
+
+function resolveAgentProvider(agent: unknown): string | null {
+  const provider = (agent as { options?: { client?: { provider?: string } } })?.options?.client?.provider;
+  return typeof provider === "string" ? provider : null;
+}
+
+function findLatestResponseId(turns: ConversationTurn[]): string | undefined {
+  for (let index = turns.length - 1; index >= 0; index -= 1) {
+    const responseId = turns[index]?.responseId;
+    if (typeof responseId === "string" && responseId.length > 0) {
+      return responseId;
+    }
+  }
+  return undefined;
+}
+
+async function hydrateHistoryFromPersistence(
+  persistence: McpPersistence,
+  history: InMemoryHistory,
+  sessionId: string,
+  agentId?: string,
+): Promise<void> {
+  const conversation = await persistence.readConversation(sessionId, agentId);
+  if (!conversation) {
+    return;
+  }
+
+  for (const turn of conversation.turns) {
+    await history.addMessage({
+      role: "user",
+      content: turn.userContent ?? turn.userMessage,
+    });
+
+    const assistantContent = buildAssistantHistoryContent(turn);
+    if (!assistantContent) {
+      continue;
+    }
+
+    await history.addMessage({
+      role: "assistant",
+      content: assistantContent,
+    });
+  }
+}
+
+function buildAssistantHistoryContent(turn: ConversationTurn): string {
+  const parts: string[] = [];
+  const assistantMessage = turn.assistantMessage.trim();
+  if (assistantMessage.length > 0) {
+    parts.push(assistantMessage);
+  }
+
+  const artifactTexts = (turn.timeline ?? [])
+    .filter((item): item is Extract<TimelineItem, { kind: "artifact" }> => item.kind === "artifact")
+    .map((item) => item.text.trim())
+    .filter((text) => text.length > 0);
+
+  if (artifactTexts.length > 0) {
+    parts.push(artifactTexts.join("\n\n"));
+  }
+
+  return parts.join("\n\n").trim();
 }
 
 function toUserMessagePreview(input: string | ContentPart[]): string {

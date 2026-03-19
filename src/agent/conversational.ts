@@ -183,10 +183,15 @@ export class ConversationalAgent {
     messages: LLMMessage[],
     instructions: string,
   ): LLMChatInput {
+    const previousResponseId = this.options.context.metadata.get("previousResponseId");
     return {
       messages,
       instructions,
       tools: this.options.tools,
+      previousResponseId:
+        typeof previousResponseId === "string" && previousResponseId.length > 0
+          ? previousResponseId
+          : undefined,
     };
   }
 

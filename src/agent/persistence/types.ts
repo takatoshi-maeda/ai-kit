@@ -37,6 +37,7 @@ export type TimelineItem =
 export interface ConversationTurn {
   turnId: string;
   runId: string;
+  responseId?: string;
   timestamp: string;
   userMessage: string;
   userContent?: string | ContentPart[];

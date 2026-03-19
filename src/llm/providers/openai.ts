@@ -312,6 +312,10 @@ export class OpenAIClient implements LLMClient {
       params.text = this.convertResponseFormat(input.responseFormat);
     }
 
+    if (input.previousResponseId) {
+      params.previous_response_id = input.previousResponseId;
+    }
+
     return params;
   }
 

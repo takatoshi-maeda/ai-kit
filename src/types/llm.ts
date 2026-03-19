@@ -47,6 +47,7 @@ export interface LLMChatInput {
   toolChoice?: "none" | "auto" | "required";
   parallelToolCalls?: boolean;
   responseFormat?: ResponseFormat;
+  previousResponseId?: string;
 }
 
 export interface LLMUsage {
