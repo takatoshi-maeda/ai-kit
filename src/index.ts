@@ -230,6 +230,8 @@ export type {
   PublicAssetReadResult,
   PublicAssetResolution,
   PublicAssetStorage,
+  SavePublicFileInput,
+  SavePublicFileResult,
   SavePublicImageInput,
   SavePublicImageResult,
   AgentRunParams,

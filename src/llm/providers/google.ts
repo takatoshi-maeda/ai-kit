@@ -308,6 +308,10 @@ export class GoogleClient implements LLMClient {
               mimeType: `audio/${part.format}`,
             },
           };
+        case "file":
+          return {
+            text: `[File: ${part.file.name} (${part.file.mimeType})]`,
+          };
       }
     });
   }

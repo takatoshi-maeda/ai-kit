@@ -49,4 +49,28 @@ describe("SupabasePublicAssetStorage", () => {
       url: `https://example.supabase.test/storage/v1/object/sign/ai-kit/${encodeURIComponent(saved.storagePath)}?expiresIn=123`,
     });
   });
+
+  it("saves generic files with inferred extensions", async () => {
+    const client = createFakeSupabaseClient();
+    const storage = new SupabasePublicAssetStorage({
+      appName: "chat",
+      bucket: "ai-kit",
+      client,
+    });
+
+    const saved = await storage.saveFile({
+      agentId: "support-agent",
+      sessionId: "session/2",
+      mimeType: "text/markdown",
+      fileName: "notes.md",
+      bytes: Buffer.from("# Notes"),
+      now: new Date("2026-03-17T00:00:00.000Z"),
+    });
+
+    expect(saved.storagePath).toMatch(
+      /^chat\/support-agent\/uploads\/2026\/03\/17\/session_2\/.+\.md$/,
+    );
+    const storedObject = client.storageObject("ai-kit", saved.storagePath);
+    expect(storedObject?.contentType).toBe("text/markdown");
+  });
 });

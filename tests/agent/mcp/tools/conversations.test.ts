@@ -207,6 +207,55 @@ describe("conversations tools", () => {
       );
     });
 
+    it("converts file asset refs to public URLs when called from HTTP transport", async () => {
+      const assetRef = toFileSystemAssetRef("codefleet", "uploads/2026/03/04/s1/requirements.pdf");
+      await persistence.appendConversationTurn(
+        "s1",
+        {
+          ...makeTurn(),
+          agentId: "front-desk",
+          userContent: [
+            {
+              type: "file",
+              file: {
+                name: "requirements.pdf",
+                mimeType: "application/pdf",
+                sizeBytes: 128,
+                source: { type: "asset-ref", assetRef },
+              },
+            },
+          ],
+        },
+        "Test",
+      );
+
+      const result = await handleConversationsGet(
+        persistence,
+        {
+          sessionId: "s1",
+          agentId: "front-desk",
+          _httpTransport: true,
+          _publicBaseUrl: "http://127.0.0.1:3290/api/mcp/codefleet/public",
+        },
+        { appName: "codefleet", publicAssetsBasePath: "/api/mcp/codefleet/public" },
+      );
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.turns[0].userContent).toEqual([
+        {
+          type: "file",
+          file: {
+            name: "requirements.pdf",
+            mimeType: "application/pdf",
+            sizeBytes: 128,
+            source: {
+              type: "url",
+              url: "http://127.0.0.1:3290/api/mcp/codefleet/public/uploads/2026/03/04/s1/requirements.pdf",
+            },
+          },
+        },
+      ]);
+    });
+
     it("converts in-progress stored image paths to public URLs when called from HTTP transport", async () => {
       const userContent = [
         { type: "image", source: { type: "url", url: "uploads/2026/03/04/s1/in-progress.png" } },

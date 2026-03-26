@@ -42,6 +42,8 @@ export type {
   PublicAssetReadResult,
   PublicAssetResolution,
   PublicAssetStorage,
+  SavePublicFileInput,
+  SavePublicFileResult,
   SavePublicImageInput,
   SavePublicImageResult,
 } from "../public-assets/storage.js";

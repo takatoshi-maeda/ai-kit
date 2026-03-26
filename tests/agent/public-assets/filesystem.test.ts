@@ -44,4 +44,24 @@ describe("FileSystemPublicAssetStorage", () => {
       expect(resolved.dataUrl.startsWith("data:image/png;base64,")).toBe(true);
     }
   });
+
+  it("saves generic files and preserves their content type", async () => {
+    const publicDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-public-file-"));
+    const storage = new FileSystemPublicAssetStorage({
+      appName: "chat-app",
+      publicDir,
+    });
+
+    const saved = await storage.saveFile({
+      sessionId: "session/2",
+      mimeType: "application/pdf",
+      fileName: "requirements.pdf",
+      bytes: Buffer.from("%PDF-1.4"),
+      now: new Date("2026-03-17T00:00:00.000Z"),
+    });
+
+    expect(saved.storagePath).toMatch(/^chat-app\/public\/uploads\/2026\/03\/17\/session_2\/.+\.pdf$/);
+    const asset = await storage.readPublicAsset(saved.assetRef);
+    expect(asset?.contentType).toBe("application/pdf");
+  });
 });

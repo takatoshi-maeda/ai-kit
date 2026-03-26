@@ -24,6 +24,22 @@ const ImageSourceSchema = z.union([
   }),
 ]);
 
+const FileSourceSchema = z.union([
+  z.object({
+    type: z.literal("asset-ref"),
+    assetRef: z.string(),
+  }),
+  z.object({
+    type: z.literal("url"),
+    url: z.string(),
+  }),
+  z.object({
+    type: z.literal("base64"),
+    mediaType: z.string(),
+    data: z.string(),
+  }),
+]);
+
 const ContentPartSchema = z.union([
   z.object({
     type: z.literal("text"),
@@ -32,6 +48,15 @@ const ContentPartSchema = z.union([
   z.object({
     type: z.literal("image"),
     source: ImageSourceSchema,
+  }),
+  z.object({
+    type: z.literal("file"),
+    file: z.object({
+      name: z.string(),
+      mimeType: z.string(),
+      sizeBytes: z.number(),
+      source: FileSourceSchema,
+    }),
   }),
   z.object({
     type: z.literal("audio"),
@@ -126,6 +151,8 @@ export interface AgentToolDeps {
 }
 
 const MAX_BASE64_IMAGE_BYTES_PER_TURN = 2 * 1024 * 1024;
+const MAX_BASE64_FILE_BYTES_PER_TURN = 25 * 1024 * 1024;
+const MAX_TEXT_FILE_BYTES_FOR_INLINE_LLM = 256 * 1024;
 
 const IMAGE_MEDIA_TYPE_TO_EXTENSION: Record<string, string> = {
   "image/png": "png",
@@ -880,6 +907,14 @@ function toUserMessagePreview(input: string | ContentPart[]): string {
             return `[image:url:${part.source.url}]`;
           }
           return `[image:base64:${part.source.mediaType}]`;
+        case "file":
+          if (part.file.source.type === "asset-ref") {
+            return `[file:${part.file.name}:${part.file.mimeType}:${part.file.source.assetRef}]`;
+          }
+          if (part.file.source.type === "url") {
+            return `[file:${part.file.name}:${part.file.mimeType}:${part.file.source.url}]`;
+          }
+          return `[file:${part.file.name}:${part.file.mimeType}:base64]`;
         case "audio":
           return `[audio:${part.format}]`;
       }
@@ -913,8 +948,21 @@ async function normalizeUserInputForPersistence(
 
   const publicAssetStorage = resolvePublicAssetStorage(options);
   let totalImageBytes = 0;
+  let totalFileBytes = 0;
   const normalized: ContentPart[] = [];
   for (const part of input) {
+    if (part.type === "file") {
+      const normalizedFile = await normalizeFilePartForPersistence(part, options);
+      totalFileBytes += normalizedFile.bytesAdded;
+      if (totalFileBytes > MAX_BASE64_FILE_BYTES_PER_TURN) {
+        throw new Error(
+          `base64 file payload exceeds ${MAX_BASE64_FILE_BYTES_PER_TURN} bytes per turn`,
+        );
+      }
+      normalized.push(normalizedFile.part);
+      continue;
+    }
+
     if (part.type !== "image") {
       normalized.push(part);
       continue;
@@ -975,20 +1023,61 @@ async function normalizeUserInputForPersistence(
   return { input: normalized };
 }
 
+async function normalizeFilePartForPersistence(
+  part: Extract<ContentPart, { type: "file" }>,
+  options: NormalizeUserInputOptions,
+): Promise<{ part: Extract<ContentPart, { type: "file" }>; bytesAdded: number }> {
+  const publicAssetStorage = resolvePublicAssetStorage(options);
+  if (part.file.source.type === "asset-ref") {
+    return { part, bytesAdded: 0 };
+  }
+  if (part.file.source.type === "url" && !part.file.source.url.startsWith("data:")) {
+    return { part, bytesAdded: 0 };
+  }
+  if (!publicAssetStorage) {
+    throw new Error("base64 file input is not supported without a configured public asset storage");
+  }
+
+  const base64Source =
+    part.file.source.type === "base64"
+      ? part.file.source
+      : parseBase64DataUrl(part.file.source.url);
+  if (!base64Source) {
+    return { part, bytesAdded: 0 };
+  }
+
+  const mimeType = normalizeMediaType(base64Source.mediaType || part.file.mimeType);
+  const bytes = decodeBase64Data(base64Source.data);
+  const saved = await publicAssetStorage.saveFile({
+    agentId: options.agentId,
+    sessionId: options.sessionId,
+    mimeType,
+    fileName: part.file.name,
+    bytes,
+  });
+  return {
+    part: {
+      type: "file",
+      file: {
+        ...part.file,
+        mimeType,
+        sizeBytes: bytes.length,
+        source: {
+          type: "asset-ref",
+          assetRef: saved.assetRef,
+        },
+      },
+    },
+    bytesAdded: bytes.length,
+  };
+}
+
 function parseImageBase64DataUrl(url: string): { mediaType: string; data: string } | null {
-  if (!url.startsWith("data:")) {
+  const parsed = parseBase64DataUrl(url);
+  if (!parsed) {
     return null;
   }
-  const commaIndex = url.indexOf(",");
-  if (commaIndex <= 5) {
-    throw new Error("invalid data URL image payload");
-  }
-  const header = url.slice(5, commaIndex);
-  if (!/;base64(?:;|$)/i.test(header)) {
-    return null;
-  }
-  const mediaType = normalizeMediaType(header.split(";")[0] ?? "");
-  return { mediaType, data: url.slice(commaIndex + 1) };
+  return { mediaType: parsed.mediaType, data: parsed.data };
 }
 
 async function normalizeUserInputForLlm(
@@ -1002,6 +1091,10 @@ async function normalizeUserInputForLlm(
   const publicAssetStorage = resolvePublicAssetStorage(options);
   const normalized: ContentPart[] = [];
   for (const part of input) {
+    if (part.type === "file") {
+      normalized.push(...await normalizeFilePartForLlm(part, options, publicAssetStorage));
+      continue;
+    }
     if (part.type !== "image" || part.source.type !== "url") {
       normalized.push(part);
       continue;
@@ -1037,6 +1130,43 @@ async function normalizeUserInputForLlm(
   }
 
   return normalized;
+}
+
+async function normalizeFilePartForLlm(
+  part: Extract<ContentPart, { type: "file" }>,
+  options: NormalizeUserInputForLlmOptions,
+  publicAssetStorage: PublicAssetStorage | null,
+): Promise<ContentPart[]> {
+  const assetRef =
+    part.file.source.type === "asset-ref"
+      ? part.file.source.assetRef
+      : part.file.source.type === "url"
+        ? resolveStoredImageAssetRef(part.file.source.url, {
+            appName: options.appName,
+            publicAssetsBasePath: options.publicAssetsBasePath,
+          })
+        : null;
+  const referenceText = describeFileReference(part);
+  if (!assetRef || !publicAssetStorage?.readPublicAsset) {
+    return [{ type: "text", text: referenceText }];
+  }
+
+  const asset = await publicAssetStorage.readPublicAsset(assetRef);
+  if (!asset) {
+    return [{ type: "text", text: referenceText }];
+  }
+
+  if (
+    (part.file.mimeType === "text/plain" || part.file.mimeType === "text/markdown") &&
+    asset.bytes.length <= MAX_TEXT_FILE_BYTES_FOR_INLINE_LLM
+  ) {
+    return [{
+      type: "text",
+      text: `${referenceText}\n\n--- BEGIN ATTACHMENT ---\n${Buffer.from(asset.bytes).toString("utf-8")}\n--- END ATTACHMENT ---`,
+    }];
+  }
+
+  return [{ type: "text", text: referenceText }];
 }
 
 function resolveStoredImageAssetRef(
@@ -1117,6 +1247,32 @@ function decodePublicAssetRef(encodedAssetRef: string): string | null {
   } catch {
     return null;
   }
+}
+
+function describeFileReference(part: Extract<ContentPart, { type: "file" }>): string {
+  const location =
+    part.file.source.type === "asset-ref"
+      ? part.file.source.assetRef
+      : part.file.source.type === "url"
+        ? part.file.source.url
+        : "inline-base64";
+  return `[Attached file] name=${part.file.name} mimeType=${part.file.mimeType} sizeBytes=${part.file.sizeBytes} source=${location}`;
+}
+
+function parseBase64DataUrl(url: string): { mediaType: string; data: string } | null {
+  if (!url.startsWith("data:")) {
+    return null;
+  }
+  const commaIndex = url.indexOf(",");
+  if (commaIndex <= 5) {
+    throw new Error("invalid data URL payload");
+  }
+  const header = url.slice(5, commaIndex);
+  if (!/;base64(?:;|$)/i.test(header)) {
+    return null;
+  }
+  const mediaType = normalizeMediaType(header.split(";")[0] ?? "");
+  return { mediaType, data: url.slice(commaIndex + 1) };
 }
 
 function isLocalAddress(hostname: string): boolean {

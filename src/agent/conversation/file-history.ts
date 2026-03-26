@@ -1,7 +1,7 @@
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import type { LLMMessage } from "../../types/llm.js";
-import type { ContentPart, ImageSource } from "../../types/llm.js";
+import type { ContentPart, FileSource, ImageSource } from "../../types/llm.js";
 import type {
   ConversationHistory,
   ConversationMessage,
@@ -188,10 +188,31 @@ function isContentPart(value: unknown): value is ContentPart {
     return typeof asRecord.data === "string" &&
       typeof asRecord.format === "string";
   }
+  if (asRecord.type === "file") {
+    const file = asObjectRecord(asRecord.file);
+    return typeof file.name === "string" &&
+      typeof file.mimeType === "string" &&
+      typeof file.sizeBytes === "number" &&
+      isFileSource(asObjectRecord(file.source));
+  }
   return false;
 }
 
 function isImageSource(value: ImageSource | Record<string, unknown>): value is ImageSource {
+  if (value.type === "url") {
+    return typeof value.url === "string";
+  }
+  if (value.type === "base64") {
+    return typeof value.mediaType === "string" &&
+      typeof value.data === "string";
+  }
+  return false;
+}
+
+function isFileSource(value: FileSource | Record<string, unknown>): value is FileSource {
+  if (value.type === "asset-ref") {
+    return typeof value.assetRef === "string";
+  }
   if (value.type === "url") {
     return typeof value.url === "string";
   }

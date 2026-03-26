@@ -5,9 +5,25 @@ export type ImageSource =
   | { type: "base64"; mediaType: string; data: string }
   | { type: "url"; url: string };
 
+export type FileSource =
+  | { type: "asset-ref"; assetRef: string }
+  | { type: "url"; url: string }
+  | { type: "base64"; mediaType: string; data: string };
+
+export type FileContentPart = {
+  type: "file";
+  file: {
+    name: string;
+    mimeType: string;
+    sizeBytes: number;
+    source: FileSource;
+  };
+};
+
 export type ContentPart =
   | { type: "text"; text: string }
   | { type: "image"; source: ImageSource }
+  | FileContentPart
   | { type: "audio"; data: string; format: string };
 
 export interface LLMMessage {

@@ -4,6 +4,8 @@ import type {
   PublicAssetReadResult,
   PublicAssetResolution,
   PublicAssetStorage,
+  SavePublicFileInput,
+  SavePublicFileResult,
   SavePublicImageInput,
   SavePublicImageResult,
 } from "./storage.js";
@@ -43,25 +45,23 @@ export class FileSystemPublicAssetStorage implements PublicAssetStorage {
     if (!extension) {
       throw new Error(`unsupported image mediaType: ${mediaType}`);
     }
+    return this.saveBytes({
+      sessionId: input.sessionId,
+      extension,
+      bytes: input.bytes,
+      now: input.now,
+    });
+  }
 
-    const now = input.now ?? new Date();
-    const relativePath = [
-      "uploads",
-      String(now.getUTCFullYear()),
-      String(now.getUTCMonth() + 1).padStart(2, "0"),
-      String(now.getUTCDate()).padStart(2, "0"),
-      toSafePathSegment(input.sessionId),
-      `${crypto.randomUUID()}.${extension}`,
-    ].join("/");
-    const fullPath = resolveSafePublicAssetFilePath(this.publicDir, relativePath);
-
-    await fs.mkdir(path.dirname(fullPath), { recursive: true });
-    await fs.writeFile(fullPath, input.bytes);
-
-    return {
-      storagePath: `${this.appName}/public/${relativePath}`,
-      assetRef: toFileSystemAssetRef(this.appName, relativePath),
-    };
+  async saveFile(input: SavePublicFileInput): Promise<SavePublicFileResult> {
+    const mimeType = normalizeMediaType(input.mimeType);
+    const extension = inferFileExtension(mimeType, input.fileName);
+    return this.saveBytes({
+      sessionId: input.sessionId,
+      extension,
+      bytes: input.bytes,
+      now: input.now,
+    });
   }
 
   async resolveForLlm(input: { assetRef: string }): Promise<PublicAssetResolution> {
@@ -93,6 +93,32 @@ export class FileSystemPublicAssetStorage implements PublicAssetStorage {
       }
       throw error;
     }
+  }
+
+  private async saveBytes(input: {
+    sessionId: string;
+    extension: string;
+    bytes: Uint8Array;
+    now?: Date;
+  }): Promise<SavePublicImageResult | SavePublicFileResult> {
+    const now = input.now ?? new Date();
+    const relativePath = [
+      "uploads",
+      String(now.getUTCFullYear()),
+      String(now.getUTCMonth() + 1).padStart(2, "0"),
+      String(now.getUTCDate()).padStart(2, "0"),
+      toSafePathSegment(input.sessionId),
+      `${crypto.randomUUID()}.${input.extension}`,
+    ].join("/");
+    const fullPath = resolveSafePublicAssetFilePath(this.publicDir, relativePath);
+
+    await fs.mkdir(path.dirname(fullPath), { recursive: true });
+    await fs.writeFile(fullPath, input.bytes);
+
+    return {
+      storagePath: `${this.appName}/public/${relativePath}`,
+      assetRef: toFileSystemAssetRef(this.appName, relativePath),
+    };
   }
 }
 
@@ -153,7 +179,13 @@ function resolveSafePublicAssetFilePath(publicDir: string, relativePath: string)
 
 function contentTypeFromPath(filePath: string): string {
   const extension = path.extname(filePath).slice(1).toLowerCase();
-  return IMAGE_EXTENSION_TO_MEDIA_TYPE[extension] ?? "application/octet-stream";
+  if (IMAGE_EXTENSION_TO_MEDIA_TYPE[extension]) {
+    return IMAGE_EXTENSION_TO_MEDIA_TYPE[extension];
+  }
+  if (extension === "txt") return "text/plain";
+  if (extension === "md") return "text/markdown";
+  if (extension === "pdf") return "application/pdf";
+  return "application/octet-stream";
 }
 
 function normalizeMediaType(mediaType: string): string {
@@ -163,4 +195,15 @@ function normalizeMediaType(mediaType: string): string {
 function toSafePathSegment(value: string): string {
   const safe = value.replace(/[^A-Za-z0-9._-]/g, "_");
   return safe.length > 0 ? safe : "session";
+}
+
+function inferFileExtension(mimeType: string, fileName: string): string {
+  const explicit = path.extname(fileName).slice(1).toLowerCase();
+  if (/^[a-z0-9]+$/.test(explicit)) {
+    return explicit;
+  }
+  if (mimeType === "text/plain") return "txt";
+  if (mimeType === "text/markdown") return "md";
+  if (mimeType === "application/pdf") return "pdf";
+  return "bin";
 }

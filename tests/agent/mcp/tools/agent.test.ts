@@ -260,6 +260,96 @@ describe("agent tools", () => {
       );
     });
 
+    it("normalizes base64 file content to asset refs and expands plain text files for the LLM", async () => {
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-file-"));
+      const capturedInputs: Array<string | ContentPart[]> = [];
+      function captureAgent(ctx: AgentContext): ConversationalAgent {
+        const client: LLMClient = {
+          model: "test-model",
+          provider: "openai",
+          capabilities: defaultCapabilities,
+          async invoke() {
+            throw new Error("invoke should not be called");
+          },
+          async *stream(input) {
+            const userMessage = input.messages.findLast((message) => message.role === "user");
+            capturedInputs.push(userMessage?.content ?? "");
+            yield {
+              type: "response.completed",
+              result: makeResult("received file"),
+            };
+          },
+          estimateTokens: () => 10,
+        };
+        return new ConversationalAgent({
+          context: ctx,
+          client,
+          instructions: "Capture file input",
+        });
+      }
+
+      const registry = new AgentRegistry({
+        agents: [{ create: captureAgent, agentId: "test" }],
+      });
+      const persistence = stubPersistence();
+      const publicAssetStorage = new FileSystemPublicAssetStorage({
+        appName: "test",
+        publicDir: path.join(tempDir, "public"),
+      });
+      const deps: AgentToolDeps = {
+        appName: "test",
+        registry,
+        persistence,
+        publicAssetStorage,
+        publicAssetsDir: path.join(tempDir, "public"),
+        publicAssetsBasePath: "/api/mcp/test/public",
+      };
+      const textBase64 = Buffer.from("# Attachment\nbody", "utf-8").toString("base64");
+
+      try {
+        await handleAgentRun(deps, {
+          agentId: "test",
+          sessionId: "sess-file",
+          input: [
+            {
+              type: "file",
+              file: {
+                name: "requirements.md",
+                mimeType: "text/markdown",
+                sizeBytes: 17,
+                source: {
+                  type: "base64",
+                  mediaType: "text/markdown",
+                  data: textBase64,
+                },
+              },
+            },
+          ],
+        });
+
+        const appendTurnCall = (persistence.appendConversationTurn as ReturnType<typeof vi.fn>).mock.calls[0];
+        const persistedTurn = appendTurnCall?.[1] as { userContent?: ContentPart[] } | undefined;
+        const filePart = persistedTurn?.userContent?.[0];
+        expect(filePart?.type).toBe("file");
+        if (filePart?.type === "file") {
+          expect(filePart.file.source.type).toBe("asset-ref");
+        }
+
+        expect(capturedInputs).toHaveLength(1);
+        expect(Array.isArray(capturedInputs[0])).toBe(true);
+        if (Array.isArray(capturedInputs[0])) {
+          expect(capturedInputs[0][0]).toEqual(
+            expect.objectContaining({
+              type: "text",
+              text: expect.stringContaining("--- BEGIN ATTACHMENT ---"),
+            }),
+          );
+        }
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
     it("normalizes base64 image content to public URL and persists normalized content", async () => {
       const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-run-"));
       const publicAssetStorage = new FileSystemPublicAssetStorage({

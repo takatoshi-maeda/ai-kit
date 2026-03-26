@@ -438,6 +438,8 @@ export class OpenAIClient implements LLMClient {
         case "audio":
           // Audio is handled at message-level input, not as content part
           return { type: "input_text", text: `[Audio: ${part.format}]` };
+        case "file":
+          return { type: "input_text", text: `[File: ${part.file.name} (${part.file.mimeType})]` };
       }
     });
   }

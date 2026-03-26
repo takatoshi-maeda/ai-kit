@@ -379,6 +379,8 @@ export class AnthropicClient implements LLMClient {
       case "audio":
         // Anthropic doesn't natively support audio, send as text
         return { type: "text", text: `[Audio: ${part.format}]` };
+      case "file":
+        return { type: "text", text: `[File: ${part.file.name} (${part.file.mimeType})]` };
     }
   }
 

@@ -129,36 +129,68 @@ function formatConversationForWire(
       return content;
     }
     return content.map((part) => {
-      if (
-        typeof part !== "object" ||
-        part === null ||
-        !("type" in part) ||
-        (part as { type?: string }).type !== "image"
-      ) {
+      if (typeof part !== "object" || part === null || !("type" in part)) {
         return part;
       }
-      const imagePart = part as {
+      const contentPart = part as {
+        type?: string;
         source?: { type?: string; url?: string };
+        file?: {
+          source?: { type?: string; assetRef?: string; url?: string };
+        };
       };
-      const source = imagePart.source;
-      if (!source || source.type !== "url" || typeof source.url !== "string") {
-        return part;
+      if (contentPart.type === "image") {
+        const source = contentPart.source;
+        if (!source || source.type !== "url" || typeof source.url !== "string") {
+          return part;
+        }
+        const publicUrl = toPublicAssetUrl(
+          source.url,
+          options.publicAssetsBasePath,
+          options.appName,
+        );
+        if (!publicUrl) {
+          return part;
+        }
+        return {
+          ...contentPart,
+          source: {
+            ...source,
+            url: publicUrl,
+          },
+        };
       }
-      const publicUrl = toPublicAssetUrl(
-        source.url,
-        options.publicAssetsBasePath,
-        options.appName,
-      );
-      if (!publicUrl) {
-        return part;
+      if (contentPart.type === "file") {
+        const source = contentPart.file?.source;
+        const rawUrl =
+          source?.type === "asset-ref"
+            ? source.assetRef
+            : source?.type === "url"
+              ? source.url
+              : null;
+        if (!rawUrl) {
+          return part;
+        }
+        const publicUrl = toPublicAssetUrl(
+          rawUrl,
+          options.publicAssetsBasePath,
+          options.appName,
+        );
+        if (!publicUrl) {
+          return part;
+        }
+        return {
+          ...contentPart,
+          file: {
+            ...contentPart.file,
+            source: {
+              type: "url",
+              url: publicUrl,
+            },
+          },
+        };
       }
-      return {
-        ...imagePart,
-        source: {
-          ...source,
-          url: publicUrl,
-        },
-      };
+      return part;
     });
   };
   const mapUserMessage = (message: string): string => {

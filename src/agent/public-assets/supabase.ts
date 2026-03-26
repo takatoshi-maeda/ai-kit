@@ -6,6 +6,8 @@ import {
 import type {
   PublicAssetResolution,
   PublicAssetStorage,
+  SavePublicFileInput,
+  SavePublicFileResult,
   SavePublicImageInput,
   SavePublicImageResult,
 } from "./storage.js";
@@ -56,34 +58,25 @@ export class SupabasePublicAssetStorage implements PublicAssetStorage {
       throw new Error(`unsupported image mediaType: ${mediaType}`);
     }
 
-    const now = input.now ?? new Date();
-    const agentId = input.agentId ?? this.appName;
-    const objectKey = [
-      ...(this.objectKeyPrefix ? [this.objectKeyPrefix] : []),
-      this.appName,
-      toSafePathSegment(agentId),
-      "uploads",
-      String(now.getUTCFullYear()),
-      String(now.getUTCMonth() + 1).padStart(2, "0"),
-      String(now.getUTCDate()).padStart(2, "0"),
-      toSafePathSegment(input.sessionId),
-      `${crypto.randomUUID()}.${extension}`,
-    ].join("/");
+    return this.saveBytes({
+      sessionId: input.sessionId,
+      agentId: input.agentId,
+      contentType: mediaType,
+      extension,
+      bytes: input.bytes,
+      now: input.now,
+    });
+  }
 
-    const { error } = await this.client.storage
-      .from(this.bucket)
-      .upload(objectKey, input.bytes, {
-        contentType: mediaType,
-        upsert: false,
-      });
-    if (error) {
-      throw new Error(formatSupabaseError(error));
-    }
-
-    return {
-      storagePath: objectKey,
-      assetRef: toSupabaseAssetRef(this.bucket, objectKey),
-    };
+  async saveFile(input: SavePublicFileInput): Promise<SavePublicFileResult> {
+    return this.saveBytes({
+      sessionId: input.sessionId,
+      agentId: input.agentId,
+      contentType: normalizeMediaType(input.mimeType),
+      extension: inferFileExtension(input.mimeType, input.fileName),
+      bytes: input.bytes,
+      now: input.now,
+    });
   }
 
   async resolveForLlm(input: { assetRef: string }): Promise<PublicAssetResolution> {
@@ -105,6 +98,44 @@ export class SupabasePublicAssetStorage implements PublicAssetStorage {
     return {
       mode: "url",
       url: data.signedUrl,
+    };
+  }
+
+  private async saveBytes(input: {
+    sessionId: string;
+    agentId?: string;
+    contentType: string;
+    extension: string;
+    bytes: Uint8Array;
+    now?: Date;
+  }): Promise<SavePublicImageResult | SavePublicFileResult> {
+    const now = input.now ?? new Date();
+    const agentId = input.agentId ?? this.appName;
+    const objectKey = [
+      ...(this.objectKeyPrefix ? [this.objectKeyPrefix] : []),
+      this.appName,
+      toSafePathSegment(agentId),
+      "uploads",
+      String(now.getUTCFullYear()),
+      String(now.getUTCMonth() + 1).padStart(2, "0"),
+      String(now.getUTCDate()).padStart(2, "0"),
+      toSafePathSegment(input.sessionId),
+      `${crypto.randomUUID()}.${input.extension}`,
+    ].join("/");
+
+    const { error } = await this.client.storage
+      .from(this.bucket)
+      .upload(objectKey, input.bytes, {
+        contentType: input.contentType,
+        upsert: false,
+      });
+    if (error) {
+      throw new Error(formatSupabaseError(error));
+    }
+
+    return {
+      storagePath: objectKey,
+      assetRef: toSupabaseAssetRef(this.bucket, objectKey),
     };
   }
 }
@@ -163,4 +194,16 @@ function requiredOption(value: string | undefined, name: string): string {
     return value;
   }
   throw new Error(`Supabase public asset storage requires ${name}`);
+}
+
+function inferFileExtension(mimeType: string, fileName: string): string {
+  const explicit = fileName.split(".").pop()?.toLowerCase() ?? "";
+  if (/^[a-z0-9]+$/.test(explicit)) {
+    return explicit;
+  }
+  const normalized = normalizeMediaType(mimeType);
+  if (normalized === "text/plain") return "txt";
+  if (normalized === "text/markdown") return "md";
+  if (normalized === "application/pdf") return "pdf";
+  return "bin";
 }
