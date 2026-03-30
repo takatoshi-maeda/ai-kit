@@ -20,6 +20,19 @@ import type { PublicAssetStorage } from "../agent/public-assets/storage.js";
 import { resolveAiKitOptions } from "../config/resolver.js";
 import type { AgentContext } from "../types/agent.js";
 import type { ConversationalAgent } from "../agent/conversational.js";
+import { mountSpeechRoutes } from "./speech.js";
+import type { MountSpeechRoutesOptions } from "../speech/types.js";
+import {
+  createSpeechClient,
+  createSpeechService,
+  startSpeechWorker,
+} from "../speech/index.js";
+import type {
+  CreateSpeechClientOptions,
+  CreateSpeechServiceOptions,
+  SpeechWorkerHandle,
+  StartSpeechWorkerOptions,
+} from "../speech/types.js";
 import type { McpServer as SdkMcpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
@@ -128,6 +141,57 @@ export interface MountableHonoApp {
   ): unknown;
   post(path: string, handler: (c: any) => Promise<Response>): unknown;
   get(path: string, handler: (c: any) => Promise<Response> | Response): unknown;
+}
+
+export { mountSpeechRoutes } from "./speech.js";
+export type { MountSpeechRoutesOptions } from "../speech/types.js";
+
+export interface MountAiKitSpeechOptions extends
+  CreateSpeechClientOptions,
+  Pick<CreateSpeechServiceOptions, "dataDir" | "maxFileBytes" | "allowedMimeTypes">,
+  Omit<MountSpeechRoutesOptions, "service"> {
+  worker?: boolean | Omit<StartSpeechWorkerOptions, "service">;
+}
+
+export interface MountAiKitRoutesOptions extends MountMcpRoutesOptions {
+  speech?: MountAiKitSpeechOptions;
+}
+
+export interface MountAiKitRoutesResult {
+  mounts: Map<string, AgentMount>;
+  speechWorker?: SpeechWorkerHandle;
+}
+
+export async function mountAiKitRoutes(
+  app: MountableHonoApp,
+  options: MountAiKitRoutesOptions,
+): Promise<MountAiKitRoutesResult> {
+  const mounts = await mountMcpRoutes(app, options);
+  let speechWorker: SpeechWorkerHandle | undefined;
+
+  if (options.speech) {
+    const speechService = createSpeechService({
+      client: createSpeechClient(options.speech),
+      dataDir: options.speech.dataDir,
+      maxFileBytes: options.speech.maxFileBytes,
+      allowedMimeTypes: options.speech.allowedMimeTypes,
+    });
+    await mountSpeechRoutes(app, {
+      service: speechService,
+      basePath: options.speech.basePath,
+      auth: options.speech.auth,
+    });
+    if (options.speech.worker !== false) {
+      speechWorker = startSpeechWorker({
+        service: speechService,
+        intervalMs: typeof options.speech.worker === "object"
+          ? options.speech.worker.intervalMs
+          : undefined,
+      });
+    }
+  }
+
+  return { mounts, speechWorker };
 }
 
 export async function mountMcpRoutes(

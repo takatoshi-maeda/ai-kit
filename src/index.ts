@@ -183,6 +183,23 @@ export { BedrockReranker } from "./reranker/providers/bedrock.js";
 // Similarity
 export { TextSimilarityIndex } from "./similarity/index.js";
 
+// Speech
+export { createSpeechClient, createSpeechService, startSpeechWorker } from "./speech/index.js";
+export type {
+  CreateSpeechClientOptions,
+  CreateSpeechServiceOptions,
+  SpeechAudioInput,
+  SpeechClient,
+  SpeechService,
+  SpeechTranscriptionResult,
+  SpeechTranscriptionSegment,
+  SpeechWorkerHandle,
+  StartSpeechWorkerOptions,
+  TranscribeInput,
+  TranscriptionRecord,
+  TranscriptionStatus,
+} from "./speech/index.js";
+
 // Prompt
 export type { TemplateEngine, PromptLoaderOptions } from "./prompt/index.js";
 export { PromptLoader, MarkdownPromptLoader } from "./prompt/index.js";
