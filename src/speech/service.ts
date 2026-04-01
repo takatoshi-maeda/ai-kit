@@ -156,7 +156,7 @@ async function executeTranscription(
       updatedAt: failedAt,
     };
     await store.writeRecord(failed);
-    logTranscriptionEvent("failed", failed, input.audio.bytes.byteLength, startedAt);
+    logTranscriptionEvent("failed", failed, input.audio.bytes.byteLength, startedAt, error);
     return failed;
   }
 }
@@ -221,18 +221,50 @@ function logTranscriptionEvent(
   record: TranscriptionRecord,
   sourceFileSize: number,
   startedAt: number,
+  error?: unknown,
 ): void {
   console.log(
     JSON.stringify({
       type: "speech.transcription",
       transcriptionId: record.transcriptionId,
+      sessionId: record.sessionId ?? null,
       provider: record.provider,
       model: record.model,
+      sourceFileName: record.sourceFileName,
       sourceFileSize,
       durationMs: record.durationMs ?? null,
       latencyMs: Date.now() - startedAt,
       status,
       mimeType: record.mimeType,
+      errorMessage: record.errorMessage ?? null,
+      error: error ? serializeError(error) : null,
     }),
   );
+}
+
+function serializeError(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) {
+    return { message: String(error) };
+  }
+
+  return {
+    name: error.name,
+    message: error.message,
+    stack: error.stack ?? null,
+    cause: serializeCause(error.cause),
+  };
+}
+
+function serializeCause(cause: unknown): Record<string, unknown> | string | null {
+  if (!cause) {
+    return null;
+  }
+  if (cause instanceof Error) {
+    return {
+      name: cause.name,
+      message: cause.message,
+      stack: cause.stack ?? null,
+    };
+  }
+  return typeof cause === "string" ? cause : JSON.stringify(cause);
 }

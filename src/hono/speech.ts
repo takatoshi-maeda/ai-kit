@@ -38,9 +38,30 @@ export async function mountSpeechRoutes(
         ? await options.service.createJob(input)
         : await options.service.transcribe(input);
       const statusCode = asyncFlag ? 202 : record.status === "completed" ? 200 : 502;
+      if (statusCode === 502) {
+        console.log(
+          JSON.stringify({
+            type: "speech.http_failure",
+            path: `${basePath}/transcriptions`,
+            method: "POST",
+            statusCode,
+            async: asyncFlag,
+            transcriptionId: record.transcriptionId,
+            sessionId: record.sessionId ?? null,
+            provider: record.provider,
+            model: record.model,
+            sourceFileName: record.sourceFileName,
+            mimeType: record.mimeType,
+            errorMessage: record.errorMessage ?? null,
+          }),
+        );
+      }
       return c.json(record, statusCode);
     } catch (error) {
-      return toErrorResponse(c, error);
+      return toErrorResponse(c, error, {
+        path: `${basePath}/transcriptions`,
+        method: "POST",
+      });
     }
   });
 
@@ -53,7 +74,10 @@ export async function mountSpeechRoutes(
       }
       return c.json(record);
     } catch (error) {
-      return toErrorResponse(c, error);
+      return toErrorResponse(c, error, {
+        path: `${basePath}/transcriptions/:id`,
+        method: "GET",
+      });
     }
   });
 }
@@ -84,7 +108,20 @@ function parseBooleanLike(value: FormDataEntryValue | null): boolean {
   return normalized === "1" || normalized === "true" || normalized === "yes";
 }
 
-function toErrorResponse(c: any, error: unknown): Response {
+function toErrorResponse(
+  c: any,
+  error: unknown,
+  context: { path: string; method: string },
+): Response {
+  console.log(
+    JSON.stringify({
+      type: "speech.http_error",
+      path: context.path,
+      method: context.method,
+      error: serializeError(error),
+    }),
+  );
+
   if (error instanceof AuthError) {
     return c.json({ error: error.message }, error.status, {
       "WWW-Authenticate": error.wwwAuthenticate,
@@ -97,4 +134,31 @@ function toErrorResponse(c: any, error: unknown): Response {
     return c.json({ error: error.message }, 500);
   }
   return c.json({ error: String(error) }, 500);
+}
+
+function serializeError(error: unknown): Record<string, unknown> {
+  if (!(error instanceof Error)) {
+    return { message: String(error) };
+  }
+
+  return {
+    name: error.name,
+    message: error.message,
+    stack: error.stack ?? null,
+    cause: serializeCause(error.cause),
+  };
+}
+
+function serializeCause(cause: unknown): Record<string, unknown> | string | null {
+  if (!cause) {
+    return null;
+  }
+  if (cause instanceof Error) {
+    return {
+      name: cause.name,
+      message: cause.message,
+      stack: cause.stack ?? null,
+    };
+  }
+  return typeof cause === "string" ? cause : JSON.stringify(cause);
 }

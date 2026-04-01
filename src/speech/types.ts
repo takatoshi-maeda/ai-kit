@@ -82,12 +82,15 @@ export interface SpeechService {
 }
 
 export interface CreateSpeechClientOptions {
-  provider: "openai";
+  provider: "openai" | "google";
   model: string;
   apiKey?: string;
+  requestTimeout?: number;
   baseUrl?: string;
   organization?: string;
-  requestTimeout?: number;
+  vertexai?: boolean;
+  project?: string;
+  location?: string;
 }
 
 export interface MountSpeechRoutesOptions {
