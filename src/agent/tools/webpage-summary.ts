@@ -6,6 +6,16 @@ import type { LLMClient } from "../../types/agent.js";
 const DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash";
 const DEFAULT_ZYTE_API_URL = "https://api.zyte.com/v1/extract";
 
+type WebpageToolOptions = {
+  model?: string;
+  googleApiKey?: string;
+  vertexai?: boolean;
+  project?: string;
+  location?: string;
+  zyteApiUrl?: string;
+  zyteApiKey?: string;
+};
+
 function resolveUrl(href: string, baseUrl: string): string {
   try {
     return new URL(href, baseUrl).toString();
@@ -132,15 +142,29 @@ async function fetchBrowserHtmlViaZyte(url: string, options?: { apiKey?: string;
   }
 }
 
-export function createWebpageSummaryTool(options?: {
-  model?: string;
-  googleApiKey?: string;
-  vertexai?: boolean;
-  project?: string;
-  location?: string;
-  zyteApiUrl?: string;
-  zyteApiKey?: string;
-}): ToolDefinition {
+async function fetchWebpageMarkdown(url: string, options?: { apiKey?: string; zyteApiUrl?: string }): Promise<string> {
+  const rawHtml = await fetchBrowserHtmlViaZyte(url, options);
+  return htmlToMarkdown(extractMainHtml(rawHtml), url);
+}
+
+export function createWebpageFetchTool(options?: WebpageToolOptions): ToolDefinition {
+  return {
+    name: "webpage_fetch",
+    description:
+      "Fetch webpage content via ZyteAPI and return extracted Markdown without summarization.",
+    parameters: z.object({
+      url: z.string().url().describe("Webpage URL to fetch"),
+    }),
+    async execute(params) {
+      return fetchWebpageMarkdown(params.url, {
+        apiKey: options?.zyteApiKey,
+        zyteApiUrl: options?.zyteApiUrl,
+      });
+    },
+  };
+}
+
+export function createWebpageSummaryTool(options?: WebpageToolOptions): ToolDefinition {
   let client: LLMClient | null = null;
 
   function ensureClient(): LLMClient {
@@ -167,13 +191,10 @@ export function createWebpageSummaryTool(options?: {
     }),
     async execute(params) {
       const llm = ensureClient();
-
-      const rawHtml = await fetchBrowserHtmlViaZyte(params.url, {
+      const markdown = await fetchWebpageMarkdown(params.url, {
         apiKey: options?.zyteApiKey,
         zyteApiUrl: options?.zyteApiUrl,
       });
-
-      const markdown = htmlToMarkdown(extractMainHtml(rawHtml), params.url);
 
       const instructions = [
         "You are a helpful assistant.",

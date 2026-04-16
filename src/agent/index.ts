@@ -33,6 +33,7 @@ export {
   createRipgrepTool,
   createTreeTool,
   createTodoTools,
+  createWebpageFetchTool,
   createWebpageSummaryTool,
 } from "./tools/index.js";
 export type { TodoItem } from "./tools/index.js";
