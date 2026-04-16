@@ -29,6 +29,7 @@ export interface OpenAIClientOptions extends LLMClientOptionsBase {
   organization?: string;
   reasoningEffort?: "low" | "medium" | "high";
   reasoningSummary?: "auto" | "concise" | "detailed";
+  verbosity?: "low" | "medium" | "high";
 }
 
 export interface AnthropicClientOptions extends LLMClientOptionsBase {

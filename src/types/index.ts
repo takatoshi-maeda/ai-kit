@@ -75,6 +75,14 @@ export type {
 } from "./model.js";
 
 export type {
+  AgentReasoningEffort,
+  AgentRuntimePolicy,
+  AgentRuntimeSettings,
+  AgentVerbosity,
+  ResolvedAgentRuntime,
+} from "./runtime.js";
+
+export type {
   EmbeddingProviderId,
   EmbeddingModel,
   EmbeddingProvider,

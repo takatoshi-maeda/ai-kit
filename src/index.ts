@@ -66,6 +66,11 @@ export type {
   // Model
   ModelCapabilities,
   ModelInfo,
+  AgentReasoningEffort,
+  AgentRuntimePolicy,
+  AgentRuntimeSettings,
+  AgentVerbosity,
+  ResolvedAgentRuntime,
   // Embedding
   EmbeddingProviderId,
   EmbeddingModel,

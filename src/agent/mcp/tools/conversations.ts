@@ -219,6 +219,7 @@ function formatConversationForWire(
     timeline: turn.timeline ?? null,
     agentId: turn.agentId ?? null,
     agentName: turn.agentName ?? null,
+    runtime: turn.runtime ?? null,
   }));
 
   const inProgress = conversation.inProgress
@@ -235,6 +236,7 @@ function formatConversationForWire(
         timeline: conversation.inProgress.timeline ?? null,
         agentId: conversation.inProgress.agentId ?? null,
         agentName: conversation.inProgress.agentName ?? null,
+        runtime: conversation.inProgress.runtime ?? null,
       }
     : null;
 
@@ -248,6 +250,7 @@ function formatConversationForWire(
     status: conversation.status,
     inProgress,
     turns,
+    lastRuntime: conversation.lastRuntime ?? null,
   };
 }
 

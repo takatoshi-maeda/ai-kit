@@ -126,8 +126,8 @@ describe("AgentRegistry", () => {
     const payload = registry.listPayload();
     expect(payload.defaultAgentId).toBe("custom");
     expect(payload.agents).toEqual([
-      { agentId: "stubAgent", description: "Stub agent" },
-      { agentId: "custom", description: "Custom" },
+      { agentId: "stubAgent", description: "Stub agent", runtimePolicy: undefined },
+      { agentId: "custom", description: "Custom", runtimePolicy: undefined },
     ]);
   });
 });

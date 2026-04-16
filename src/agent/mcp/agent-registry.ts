@@ -1,6 +1,7 @@
 import type { AgentContext } from "../../types/agent.js";
 import type { ConversationalAgent } from "../conversational.js";
 import { AiKitError } from "../../errors.js";
+import type { AgentRuntimePolicy, ResolvedAgentRuntime } from "../../types/runtime.js";
 
 /** エージェント登録エントリ */
 export interface AgentEntry {
@@ -8,11 +9,13 @@ export interface AgentEntry {
   create: (
     context: AgentContext,
     params?: Record<string, unknown>,
+    runtime?: ResolvedAgentRuntime,
   ) => ConversationalAgent;
   /** MCP ツール一覧に表示する説明 */
   description?: string;
   /** カスタム ID。未指定時はファクトリ関数名を使用 */
   agentId?: string;
+  runtimePolicy?: AgentRuntimePolicy;
 }
 
 export interface AgentRegistryOptions {
@@ -90,13 +93,14 @@ export class AgentRegistry {
   /** agent.list ツール用のペイロードを生成 */
   listPayload(): {
     defaultAgentId: string | null;
-    agents: { agentId: string; description?: string }[];
+    agents: { agentId: string; description?: string; runtimePolicy?: AgentRuntimePolicy }[];
   } {
     return {
       defaultAgentId: this.defaultAgentId,
       agents: [...this.entries.entries()].map(([id, entry]) => ({
         agentId: id,
         description: entry.description,
+        runtimePolicy: entry.runtimePolicy,
       })),
     };
   }

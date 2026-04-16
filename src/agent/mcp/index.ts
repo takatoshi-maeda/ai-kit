@@ -8,6 +8,11 @@ import { buildMcpServer } from "./server.js";
 
 export { AgentRegistry } from "./agent-registry.js";
 export type { AgentEntry, AgentRegistryOptions } from "./agent-registry.js";
+export {
+  AgentRuntimeValidationError,
+  hasRequestedRuntime,
+  resolveAgentRuntime,
+} from "./runtime.js";
 export { JsonlMcpPersistence } from "./jsonl-persistence.js";
 export { FilesystemPersistence } from "../persistence/filesystem.js";
 export { PostgresPersistence } from "../persistence/postgres.js";
