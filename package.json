@@ -5,6 +5,11 @@
   "description": "Unified TypeScript package for LLM clients and agents",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "resources",
+    "LICENSE"
+  ],
   "bin": {
     "ai-kit": "./dist/cli.js"
   },

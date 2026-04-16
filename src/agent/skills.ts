@@ -1,6 +1,7 @@
 import * as fs from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import * as path from "node:path";
+import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
 import type { ContentPart } from "../types/llm.js";
 import type { AgentReasoningEffort, AgentVerbosity } from "../types/runtime.js";
@@ -27,41 +28,27 @@ interface ParsedSkillFile {
   agentRuntime?: SkillAgentRuntime;
 }
 
+const bundledSkillsRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../resources/skills",
+);
+
 export async function listSkills(workingDir: string): Promise<DiscoveredSkill[]> {
-  const skillsRoot = path.join(path.resolve(workingDir), ".skills");
-  let entries: Dirent[];
-  try {
-    entries = await fs.readdir(skillsRoot, { withFileTypes: true });
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
-      return [];
-    }
-    throw error;
+  const workspaceSkillsRoot = path.join(path.resolve(workingDir), ".skills");
+  const [bundledSkills, workspaceSkills] = await Promise.all([
+    listSkillsFromRoot(bundledSkillsRoot),
+    listSkillsFromRoot(workspaceSkillsRoot),
+  ]);
+
+  const merged = new Map<string, DiscoveredSkill>();
+  for (const skill of bundledSkills) {
+    merged.set(skill.name, skill);
+  }
+  for (const skill of workspaceSkills) {
+    merged.set(skill.name, skill);
   }
 
-  const skills: DiscoveredSkill[] = [];
-  for (const entry of entries) {
-    if (!entry.isDirectory()) {
-      continue;
-    }
-    const directory = path.join(skillsRoot, entry.name);
-    const filePath = path.join(directory, "SKILL.md");
-    const parsed = await readSkillFile(filePath);
-    if (!parsed) {
-      continue;
-    }
-    skills.push({
-      name: parsed.name,
-      description: parsed.description,
-      mention: `$${parsed.name}`,
-      directory,
-      body: parsed.body,
-      agentRuntime: parsed.agentRuntime,
-    });
-  }
-
-  skills.sort((left, right) => left.name.localeCompare(right.name));
-  return skills;
+  return [...merged.values()].sort((left, right) => left.name.localeCompare(right.name));
 }
 
 export function collectSkillMentionNames(
@@ -189,6 +176,37 @@ async function readSkillFile(filePath: string): Promise<ParsedSkillFile | null> 
   return parsed;
 }
 
+async function listSkillsFromRoot(rootDirectory: string): Promise<DiscoveredSkill[]> {
+  return collectSkillsFromDirectory(path.resolve(rootDirectory));
+}
+
+async function collectSkillsFromDirectory(directory: string): Promise<DiscoveredSkill[]> {
+  const parsed = await readSkillFile(path.join(directory, "SKILL.md"));
+  if (parsed) {
+    return [toDiscoveredSkill(directory, parsed)];
+  }
+
+  let entries: Dirent[];
+  try {
+    entries = await fs.readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return [];
+    }
+    throw error;
+  }
+
+  const skills: DiscoveredSkill[] = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) {
+      continue;
+    }
+    skills.push(...await collectSkillsFromDirectory(path.join(directory, entry.name)));
+  }
+  return skills;
+}
+
 function parseSkillMarkdown(raw: string): ParsedSkillFile | null {
   if (!raw.startsWith("---\n")) {
     return null;
@@ -229,6 +247,17 @@ function parseSkillMarkdown(raw: string): ParsedSkillFile | null {
     description,
     body,
     agentRuntime: parseAgentRuntime(doc),
+  };
+}
+
+function toDiscoveredSkill(directory: string, parsed: ParsedSkillFile): DiscoveredSkill {
+  return {
+    name: parsed.name,
+    description: parsed.description,
+    mention: `$${parsed.name}`,
+    directory,
+    body: parsed.body,
+    agentRuntime: parsed.agentRuntime,
   };
 }
 

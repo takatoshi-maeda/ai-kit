@@ -178,7 +178,7 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
   if (agentRegistry) {
     const skillsShape = extractShape(SkillsListParamsSchema);
     server.registerTool("skills.list", {
-      description: "List explicit skills available to an agent in its current working directory.",
+      description: "List explicit skills available to an agent from its current working directory and bundled global skills.",
       inputSchema: skillsShape,
     }, async (args) => {
       const parsed = SkillsListParamsSchema.parse(args);
