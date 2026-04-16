@@ -43,6 +43,9 @@ function makeBasicInput(): LLMChatInput {
 describe("GoogleClient", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    delete process.env.GEMINI_API_KEY;
+    delete process.env.GOOGLE_API_KEY;
+    delete process.env.GOOGLE_CLOUD_SA_CREDENTIAL;
   });
 
   describe("constructor", () => {
@@ -56,6 +59,24 @@ describe("GoogleClient", () => {
     it("passes apiKey when provided", () => {
       makeClient({ apiKey: "my-key" });
       expect(capturedCtorArgs).toEqual({ apiKey: "my-key" });
+    });
+
+    it("uses GEMINI_API_KEY when apiKey is not provided", () => {
+      process.env.GEMINI_API_KEY = "gemini-env-key";
+      makeClient({ apiKey: undefined });
+      expect(capturedCtorArgs).toEqual({ apiKey: "gemini-env-key" });
+    });
+
+    it("prefers explicit apiKey over GEMINI_API_KEY", () => {
+      process.env.GEMINI_API_KEY = "gemini-env-key";
+      makeClient({ apiKey: "explicit-key" });
+      expect(capturedCtorArgs).toEqual({ apiKey: "explicit-key" });
+    });
+
+    it("falls back to GOOGLE_API_KEY when GEMINI_API_KEY is not set", () => {
+      process.env.GOOGLE_API_KEY = "google-env-key";
+      makeClient({ apiKey: undefined });
+      expect(capturedCtorArgs).toEqual({ apiKey: "google-env-key" });
     });
 
     it("uses Vertex AI mode when GOOGLE_CLOUD_SA_CREDENTIAL is set and no apiKey", () => {

@@ -10,6 +10,7 @@ import type {
   TranscribeInput,
 } from "../types.js";
 import { LLMApiError, RateLimitError } from "../../errors.js";
+import { resolveGoogleClientOptions } from "../../google/client-options.js";
 
 export class GoogleSpeechClient implements SpeechClient {
   readonly provider = "google" as const;
@@ -66,39 +67,7 @@ export class GoogleSpeechClient implements SpeechClient {
 }
 
 function buildClientOptions(options: CreateSpeechClientOptions) {
-  if (options.apiKey) {
-    return { apiKey: options.apiKey };
-  }
-
-  const saJson = process.env.GOOGLE_CLOUD_SA_CREDENTIAL;
-  if (saJson) {
-    const sa = JSON.parse(saJson) as {
-      project_id?: string;
-      client_email?: string;
-      private_key?: string;
-    };
-    return {
-      vertexai: true,
-      project: options.project ?? sa.project_id,
-      location: options.location ?? "us-central1",
-      googleAuthOptions: {
-        credentials: {
-          client_email: sa.client_email,
-          private_key: sa.private_key,
-        },
-      },
-    };
-  }
-
-  if (options.vertexai) {
-    return {
-      vertexai: true,
-      project: options.project,
-      location: options.location ?? "us-central1",
-    };
-  }
-
-  return { apiKey: options.apiKey };
+  return resolveGoogleClientOptions(options);
 }
 
 function buildPrompt(input: TranscribeInput): string {
