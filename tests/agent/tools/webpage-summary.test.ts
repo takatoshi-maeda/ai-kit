@@ -41,4 +41,16 @@ describe("webpage tools", () => {
     expect(result).toContain("[world](https://example.com/news)");
     expect(result).not.toContain("要約");
   });
+
+  it("webpage_fetch retries once after Zyte abort and then fails", async () => {
+    process.env.ZYTE_API_KEY = "test-key";
+    globalThis.fetch = vi.fn(async () => {
+      throw new DOMException("This operation was aborted", "AbortError");
+    }) as typeof fetch;
+
+    const tool = createWebpageFetchTool();
+
+    await expect(tool.execute({ url: "https://example.com/article" })).rejects.toThrow("This operation was aborted");
+    expect(globalThis.fetch).toHaveBeenCalledTimes(2);
+  });
 });

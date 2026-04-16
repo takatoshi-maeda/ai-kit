@@ -5,6 +5,8 @@ import type { LLMClient } from "../../types/agent.js";
 
 const DEFAULT_GOOGLE_MODEL = "gemini-2.5-flash";
 const DEFAULT_ZYTE_API_URL = "https://api.zyte.com/v1/extract";
+const DEFAULT_ZYTE_TIMEOUT_MS = 180_000;
+const DEFAULT_ZYTE_RETRIES = 1;
 
 type WebpageToolOptions = {
   model?: string;
@@ -14,7 +16,22 @@ type WebpageToolOptions = {
   location?: string;
   zyteApiUrl?: string;
   zyteApiKey?: string;
+  zyteTimeoutMs?: number;
 };
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isAbortLikeError(error: unknown): boolean {
+  if (error instanceof DOMException) {
+    return error.name === "AbortError";
+  }
+  if (error instanceof Error) {
+    return error.name === "AbortError" || /aborted/i.test(error.message);
+  }
+  return false;
+}
 
 function resolveUrl(href: string, baseUrl: string): string {
   try {
@@ -102,7 +119,10 @@ function htmlToMarkdown(html: string, baseUrl: string): string {
   return text.trim() + "\n";
 }
 
-async function fetchBrowserHtmlViaZyte(url: string, options?: { apiKey?: string; zyteApiUrl?: string }): Promise<string> {
+async function fetchBrowserHtmlViaZyte(
+  url: string,
+  options?: { apiKey?: string; zyteApiUrl?: string; timeoutMs?: number },
+): Promise<string> {
   const apiKey = options?.apiKey ?? process.env.LLM_KIT_ZYTE_API_KEY ?? process.env.ZYTE_API_KEY;
   if (!apiKey) {
     throw new Error("Zyte API key is missing. Set LLM_KIT_ZYTE_API_KEY or ZYTE_API_KEY.");
@@ -112,7 +132,7 @@ async function fetchBrowserHtmlViaZyte(url: string, options?: { apiKey?: string;
   const auth = Buffer.from(`${apiKey}:`, "utf-8").toString("base64");
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 60_000);
+  const timeout = setTimeout(() => controller.abort(), options?.timeoutMs ?? DEFAULT_ZYTE_TIMEOUT_MS);
 
   try {
     const response = await fetch(endpoint, {
@@ -142,9 +162,30 @@ async function fetchBrowserHtmlViaZyte(url: string, options?: { apiKey?: string;
   }
 }
 
-async function fetchWebpageMarkdown(url: string, options?: { apiKey?: string; zyteApiUrl?: string }): Promise<string> {
-  const rawHtml = await fetchBrowserHtmlViaZyte(url, options);
-  return htmlToMarkdown(extractMainHtml(rawHtml), url);
+async function fetchWebpageMarkdown(
+  url: string,
+  options?: { apiKey?: string; zyteApiUrl?: string; zyteTimeoutMs?: number },
+): Promise<string> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt <= DEFAULT_ZYTE_RETRIES; attempt++) {
+    try {
+      const rawHtml = await fetchBrowserHtmlViaZyte(url, {
+        apiKey: options?.apiKey,
+        zyteApiUrl: options?.zyteApiUrl,
+        timeoutMs: options?.zyteTimeoutMs,
+      });
+      return htmlToMarkdown(extractMainHtml(rawHtml), url);
+    } catch (error) {
+      lastError = error;
+      if (attempt >= DEFAULT_ZYTE_RETRIES || !isAbortLikeError(error)) {
+        break;
+      }
+      await sleep(250 * (attempt + 1));
+    }
+  }
+
+  throw lastError;
 }
 
 export function createWebpageFetchTool(options?: WebpageToolOptions): ToolDefinition {
@@ -159,6 +200,7 @@ export function createWebpageFetchTool(options?: WebpageToolOptions): ToolDefini
       return fetchWebpageMarkdown(params.url, {
         apiKey: options?.zyteApiKey,
         zyteApiUrl: options?.zyteApiUrl,
+        zyteTimeoutMs: options?.zyteTimeoutMs,
       });
     },
   };
@@ -194,6 +236,7 @@ export function createWebpageSummaryTool(options?: WebpageToolOptions): ToolDefi
       const markdown = await fetchWebpageMarkdown(params.url, {
         apiKey: options?.zyteApiKey,
         zyteApiUrl: options?.zyteApiUrl,
+        zyteTimeoutMs: options?.zyteTimeoutMs,
       });
 
       const instructions = [
