@@ -1,7 +1,15 @@
 import * as fs from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import * as path from "node:path";
+import yaml from "js-yaml";
 import type { ContentPart } from "../types/llm.js";
+import type { AgentReasoningEffort, AgentVerbosity } from "../types/runtime.js";
+
+export interface SkillAgentRuntime {
+  model?: string;
+  reasoningEffort?: AgentReasoningEffort;
+  verbosity?: AgentVerbosity;
+}
 
 export interface DiscoveredSkill {
   name: string;
@@ -9,12 +17,14 @@ export interface DiscoveredSkill {
   mention: string;
   directory: string;
   body: string;
+  agentRuntime?: SkillAgentRuntime;
 }
 
 interface ParsedSkillFile {
   name: string;
   description: string;
   body: string;
+  agentRuntime?: SkillAgentRuntime;
 }
 
 export async function listSkills(workingDir: string): Promise<DiscoveredSkill[]> {
@@ -46,6 +56,7 @@ export async function listSkills(workingDir: string): Promise<DiscoveredSkill[]>
       mention: `$${parsed.name}`,
       directory,
       body: parsed.body,
+      agentRuntime: parsed.agentRuntime,
     });
   }
 
@@ -194,40 +205,78 @@ function parseSkillMarkdown(raw: string): ParsedSkillFile | null {
     return null;
   }
 
-  let name: string | undefined;
-  let description: string | undefined;
-  for (const line of frontmatter.split("\n")) {
-    const trimmed = line.trim();
-    if (trimmed.length === 0 || trimmed.startsWith("#")) {
-      continue;
-    }
-    const match = /^([A-Za-z0-9_-]+)\s*:\s*(.+)$/.exec(trimmed);
-    if (!match) {
-      return null;
-    }
-    const value = stripQuotes(match[2].trim());
-    if (match[1] === "name") {
-      name = value;
-    } else if (match[1] === "description") {
-      description = value;
-    }
+  let frontmatterDoc: unknown;
+  try {
+    frontmatterDoc = yaml.load(frontmatter);
+  } catch {
+    return null;
   }
+
+  const doc = asRecord(frontmatterDoc);
+  if (!doc) {
+    return null;
+  }
+
+  const name = asString(doc.name);
+  const description = asString(doc.description);
 
   if (!name || !description) {
     return null;
   }
 
-  return { name, description, body };
+  return {
+    name,
+    description,
+    body,
+    agentRuntime: parseAgentRuntime(doc),
+  };
 }
 
-function stripQuotes(value: string): string {
-  if (
-    (value.startsWith("\"") && value.endsWith("\"")) ||
-    (value.startsWith("'") && value.endsWith("'"))
-  ) {
-    return value.slice(1, -1).trim();
+function parseAgentRuntime(doc: Record<string, unknown>): SkillAgentRuntime | undefined {
+  const metadata = asRecord(doc.metadata);
+  const agentRuntime = asRecord(metadata?.["agent-runtime"]);
+  const model = asString(agentRuntime?.model);
+  const reasoningEffort = asReasoningEffort(agentRuntime?.["reasoning-effort"]);
+  const verbosity = asVerbosity(agentRuntime?.verbosity);
+
+  if (!model && !reasoningEffort && !verbosity) {
+    return undefined;
   }
-  return value;
+
+  return {
+    ...(model ? { model } : {}),
+    ...(reasoningEffort ? { reasoningEffort } : {}),
+    ...(verbosity ? { verbosity } : {}),
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function asReasoningEffort(value: unknown): AgentReasoningEffort | undefined {
+  if (value === "low" || value === "medium" || value === "high") {
+    return value;
+  }
+  return undefined;
+}
+
+function asVerbosity(value: unknown): AgentVerbosity | undefined {
+  if (value === "low" || value === "medium" || value === "high") {
+    return value;
+  }
+  return undefined;
 }
 
 function escapeAttribute(value: string): string {

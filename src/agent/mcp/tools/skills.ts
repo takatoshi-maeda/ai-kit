@@ -45,6 +45,21 @@ export async function handleSkillsList(
       name: skill.name,
       description: skill.description,
       mention: skill.mention,
+      ...(skill.agentRuntime
+        ? {
+            agent_runtime: {
+              ...(skill.agentRuntime.model
+                ? { model: skill.agentRuntime.model }
+                : {}),
+              ...(skill.agentRuntime.reasoningEffort
+                ? { reasoning_effort: skill.agentRuntime.reasoningEffort }
+                : {}),
+              ...(skill.agentRuntime.verbosity
+                ? { verbosity: skill.agentRuntime.verbosity }
+                : {}),
+            },
+          }
+        : {}),
     })),
   };
 
