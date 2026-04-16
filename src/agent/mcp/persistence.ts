@@ -1,6 +1,9 @@
 export type {
+  AgentSessionState,
+  AgentSkillsSessionState,
   AgentPersistence,
   Conversation,
+  ConversationStateEvent,
   ConversationSummary,
   ConversationTurn,
   IdempotencyRecord,

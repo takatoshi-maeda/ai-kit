@@ -2,6 +2,7 @@ import type { AgentContext } from "../../types/agent.js";
 import type { ConversationalAgent } from "../conversational.js";
 import { AiKitError } from "../../errors.js";
 import type { AgentRuntimePolicy, ResolvedAgentRuntime } from "../../types/runtime.js";
+import type { AgentSkillsOptions } from "../../types/agent.js";
 
 /** エージェント登録エントリ */
 export interface AgentEntry {
@@ -16,6 +17,7 @@ export interface AgentEntry {
   /** カスタム ID。未指定時はファクトリ関数名を使用 */
   agentId?: string;
   runtimePolicy?: AgentRuntimePolicy;
+  skills?: AgentSkillsOptions;
 }
 
 export interface AgentRegistryOptions {

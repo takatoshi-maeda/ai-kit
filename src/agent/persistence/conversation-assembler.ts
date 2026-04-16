@@ -1,5 +1,7 @@
 import type {
+  AgentSessionState,
   Conversation,
+  ConversationStateEvent,
   ConversationSummary,
   ConversationTurn,
   RunState,
@@ -12,8 +14,8 @@ export interface ConversationMetaRecord {
 }
 
 export interface ConversationRecord {
-  type: "turn";
-  data: ConversationTurn;
+  type: "turn" | "state";
+  data: ConversationTurn | ConversationStateEvent;
   timestamp: string;
 }
 
@@ -30,12 +32,18 @@ export function assembleConversation(
   },
 ): Conversation {
   const turns: ConversationTurn[] = [];
+  let sessionState: AgentSessionState | undefined;
 
   for (const record of records) {
-    turns.push(record.data);
+    if (record.type === "turn") {
+      turns.push(record.data as ConversationTurn);
+      continue;
+    }
+    sessionState = (record.data as ConversationStateEvent).sessionState;
   }
 
   const latestRunState = options?.latestRunState;
+  const effectiveSessionState = latestRunState?.metadata?.sessionState ?? sessionState;
   const firstTimestamp =
     options?.createdAt ??
     records[0]?.timestamp ??
@@ -61,6 +69,7 @@ export function assembleConversation(
     agentId: options?.agentId,
     agentName: options?.agentName,
     status: isInProgress ? "progress" : "idle",
+    sessionState: effectiveSessionState,
     turns,
   };
 

@@ -40,6 +40,8 @@ export type {
   AgentResult,
   TurnResult,
   AgentOptions,
+  AgentSkillResolverContext,
+  AgentSkillsOptions,
   AgentHooks,
   BeforeTurnHook,
   AfterTurnHook,

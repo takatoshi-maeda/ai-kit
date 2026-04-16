@@ -36,6 +36,8 @@ export type {
   AgentResult,
   TurnResult,
   AgentOptions,
+  AgentSkillResolverContext,
+  AgentSkillsOptions,
   AgentHooks,
   BeforeTurnHook,
   AfterTurnHook,
@@ -123,6 +125,14 @@ export { AgentContextImpl } from "./agent/index.js";
 export type { AgentContextOptions } from "./agent/index.js";
 export { ProgressTrackerImpl } from "./agent/index.js";
 export { ConversationalAgent } from "./agent/index.js";
+export {
+  buildActiveSkillsInstructions,
+  collectSkillMentionNames,
+  listSkills,
+  resolveSkillsByName,
+  stripResolvedSkillMentions,
+} from "./agent/index.js";
+export type { DiscoveredSkill } from "./agent/index.js";
 export type { AgentStream } from "./agent/index.js";
 export { StructuredAgent } from "./agent/index.js";
 export { AgentRouter } from "./agent/index.js";
@@ -235,6 +245,8 @@ export type {
   AgentEntry,
   AgentRegistryOptions,
   CreatePersistenceBundleOptions,
+  AgentSessionState,
+  AgentSkillsSessionState,
   AgentPersistence,
   FileSystemBackend,
   PostgresBackend,
@@ -242,6 +254,7 @@ export type {
   PersistenceBackendOptions,
   PersistenceBundle,
   Conversation,
+  ConversationStateEvent,
   ConversationSummary,
   ConversationTurn,
   TimelineItem,

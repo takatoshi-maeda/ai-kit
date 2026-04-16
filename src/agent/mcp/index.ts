@@ -33,9 +33,12 @@ export {
   toSupabaseAssetRef,
 } from "../public-assets/supabase.js";
 export type {
+  AgentSessionState,
+  AgentSkillsSessionState,
   AgentPersistence,
   McpPersistence,
   Conversation,
+  ConversationStateEvent,
   ConversationSummary,
   ConversationTurn,
   TimelineItem,

@@ -5,6 +5,13 @@ import type { McpPersistence, ConversationTurn, TimelineItem } from "../persiste
 import { AgentContextImpl } from "../../context.js";
 import { InMemoryHistory } from "../../conversation/memory-history.js";
 import {
+  buildActiveSkillsInstructions,
+  collectSkillMentionNames,
+  listSkills,
+  resolveSkillsByName,
+  stripResolvedSkillMentions,
+} from "../../skills.js";
+import {
   FileSystemPublicAssetStorage,
   toFileSystemAssetRef,
 } from "../../public-assets/filesystem.js";
@@ -21,6 +28,7 @@ import type {
   ResolvedAgentRuntime,
 } from "../../../types/runtime.js";
 import { resolveAgentRuntime } from "../runtime.js";
+import { resolveAgentWorkingDir } from "./skills.js";
 
 const ImageSourceSchema = z.union([
   z.object({
@@ -237,8 +245,37 @@ export async function handleAgentRun(
     throw new Error("Either message or input must be provided");
   }
 
-  const normalized = await normalizeUserInputForPersistence(
+  const existingConversation = await deps.persistence.readConversation(sessionId, agentId);
+  const workingDir = await resolveAgentWorkingDir(
+    deps.registry,
+    agentId,
+    deps.authContext,
+    agentParams,
+  );
+  const persistedSkillsState = existingConversation?.sessionState?.skills;
+  if (
+    persistedSkillsState?.workingDir &&
+    workingDir &&
+    persistedSkillsState.workingDir !== workingDir
+  ) {
+    throw new Error("working_dir_changed_requires_new_session");
+  }
+
+  const availableSkills = workingDir ? await listSkills(workingDir) : [];
+  const mentionedSkillNames = collectSkillMentionNames(resolvedUserInput);
+  const activeSkillNames = [
+    ...(persistedSkillsState?.activeSkillNames ?? []),
+    ...mentionedSkillNames,
+  ];
+  const resolvedSkills = resolveSkillsByName(availableSkills, activeSkillNames);
+  const additionalInstructions = buildActiveSkillsInstructions([...resolvedSkills.values()]);
+  const sanitizedUserInput = stripResolvedSkillMentions(
     resolvedUserInput,
+    resolvedSkills.keys(),
+  );
+
+  const normalized = await normalizeUserInputForPersistence(
+    sanitizedUserInput,
     {
       appName: deps.appName,
       agentId,
@@ -302,6 +339,16 @@ export async function handleAgentRun(
     userContent: userInput,
     agentId,
     runtime: resolvedRuntime,
+    metadata: workingDir
+      ? {
+          sessionState: {
+            skills: {
+              workingDir,
+              activeSkillNames: [...resolvedSkills.keys()],
+            },
+          },
+        }
+      : undefined,
   });
 
   // Send start notification
@@ -318,7 +365,6 @@ export async function handleAgentRun(
   await deps.persistence.appendInputMessageHistory(userMessagePreview, sessionId, runId);
 
   // Create agent context and run
-  const existingConversation = await deps.persistence.readConversation(sessionId, agentId);
   const persistedPreviousResponseId = findLatestResponseId(existingConversation?.turns ?? []);
   const history = new InMemoryHistory();
   const context = new AgentContextImpl({
@@ -346,7 +392,7 @@ export async function handleAgentRun(
   try {
     if (enableStream && deps.sendNotification) {
       // Run with streaming notifications
-      const agentStream = agent.stream(llmInput);
+      const agentStream = agent.stream(llmInput, additionalInstructions);
       let agentResult: Awaited<typeof agentStream.result>;
       try {
         for await (const event of agentStream) {
@@ -381,6 +427,16 @@ export async function handleAgentRun(
               timeline: cloneTimeline(runTimeline),
               metadata: {
                 usageCostSession: getUsageCostSessionMetadata(context),
+                ...(workingDir
+                  ? {
+                      sessionState: {
+                        skills: {
+                          workingDir,
+                          activeSkillNames: [...resolvedSkills.keys()],
+                        },
+                      },
+                    }
+                  : {}),
               },
               agentId,
               runtime: resolvedRuntime,
@@ -429,7 +485,7 @@ export async function handleAgentRun(
       });
     } else {
       // Non-streaming run
-      const agentResult = await agent.invoke(llmInput);
+      const agentResult = await agent.invoke(llmInput, additionalInstructions);
 
       result = {
         sessionId,
@@ -468,6 +524,17 @@ export async function handleAgentRun(
       runtime: resolvedRuntime,
     };
     await deps.persistence.appendConversationTurn(sessionId, turn, title);
+    if (workingDir) {
+      await deps.persistence.appendSessionState(sessionId, {
+        skills: {
+          workingDir,
+          activeSkillNames: [...resolvedSkills.keys()],
+        },
+      }, {
+        agentId,
+        title,
+      });
+    }
 
     await deps.persistence.deleteRunState(sessionId, runId, agentId);
   } catch (err) {

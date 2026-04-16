@@ -2,6 +2,15 @@ import type { ContentPart } from "../../types/llm.js";
 import type { ResolvedAgentRuntime } from "../../types/runtime.js";
 import type { SerializedUsageCostSessionState } from "../../llm/costs.js";
 
+export interface AgentSkillsSessionState {
+  workingDir: string;
+  activeSkillNames: string[];
+}
+
+export interface AgentSessionState {
+  skills?: AgentSkillsSessionState;
+}
+
 /** タイムラインアイテム（UI 用進捗表示） */
 export type TimelineItem =
   | {
@@ -53,6 +62,10 @@ export interface ConversationTurn {
   runtime?: ResolvedAgentRuntime;
 }
 
+export interface ConversationStateEvent {
+  sessionState: AgentSessionState;
+}
+
 /** 会話全体 */
 export interface Conversation {
   sessionId: string;
@@ -62,6 +75,7 @@ export interface Conversation {
   agentId?: string;
   agentName?: string;
   status: "idle" | "progress";
+  sessionState?: AgentSessionState;
   inProgress?: {
     runId: string;
     turnId?: string;
@@ -128,6 +142,7 @@ export interface RunState {
   timeline?: TimelineItem[];
   metadata?: {
     usageCostSession?: SerializedUsageCostSessionState;
+    sessionState?: AgentSessionState;
   };
   agentId?: string;
   agentName?: string;
@@ -153,6 +168,15 @@ export interface AgentPersistence {
     sessionId: string,
     turn: ConversationTurn,
     title?: string,
+  ): Promise<void>;
+  appendSessionState(
+    sessionId: string,
+    sessionState: AgentSessionState,
+    options?: {
+      agentId?: string;
+      agentName?: string;
+      title?: string;
+    },
   ): Promise<void>;
   appendRunState(sessionId: string, state: RunState): Promise<void>;
   deleteRunState(sessionId: string, runId: string, agentId?: string): Promise<void>;

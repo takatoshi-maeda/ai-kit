@@ -5,6 +5,7 @@ import {
 } from "./conversation-assembler.js";
 import type {
   AgentPersistence,
+  AgentSessionState,
   Conversation,
   ConversationSummary,
   ConversationTurn,
@@ -222,6 +223,31 @@ export class PostgresPersistence implements AgentPersistence {
       await this.insertEvent(tx, conversationId, {
         type: "turn",
         data: turn,
+        timestamp,
+      });
+    });
+  }
+
+  async appendSessionState(
+    sessionId: string,
+    sessionState: AgentSessionState,
+    options?: {
+      agentId?: string;
+      agentName?: string;
+      title?: string;
+    },
+  ): Promise<void> {
+    const timestamp = new Date().toISOString();
+    await this.sql.begin(async (tx) => {
+      const conversationId = await this.ensureConversation(tx, sessionId, options?.agentId, {
+        title: options?.title,
+        agentName: options?.agentName,
+        updatedAt: timestamp,
+      });
+
+      await this.insertEvent(tx, conversationId, {
+        type: "state",
+        data: { sessionState },
         timestamp,
       });
     });

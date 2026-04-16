@@ -9,6 +9,14 @@ export type { AgentRouterOptions } from "./router.js";
 export { AgentProxy } from "./proxy.js";
 export { OpenAINativeToolRuntime } from "./native-tools/runtime.js";
 export {
+  buildActiveSkillsInstructions,
+  collectSkillMentionNames,
+  listSkills,
+  resolveSkillsByName,
+  stripResolvedSkillMentions,
+} from "./skills.js";
+export type { DiscoveredSkill } from "./skills.js";
+export {
   runBeforeTurnHooks,
   runAfterTurnHooks,
   runBeforeToolCallHooks,
@@ -74,6 +82,8 @@ export type {
   AgentEntry,
   AgentRegistryOptions,
   CreatePersistenceBundleOptions,
+  AgentSessionState,
+  AgentSkillsSessionState,
   AgentPersistence,
   FileSystemBackend,
   PostgresBackend,
@@ -81,6 +91,7 @@ export type {
   PersistenceBackendOptions,
   PersistenceBundle,
   Conversation,
+  ConversationStateEvent,
   ConversationSummary,
   ConversationTurn,
   TimelineItem,

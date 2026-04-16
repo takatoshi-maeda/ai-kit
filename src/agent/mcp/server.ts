@@ -23,6 +23,10 @@ import {
   handleUsageSummary,
 } from "./tools/usage.js";
 import { handleHealthCheck } from "./tools/health.js";
+import {
+  SkillsListParamsSchema,
+  handleSkillsList,
+} from "./tools/skills.js";
 
 export interface McpServerOptions {
   /** サーバー名（MCP プロトコルの server_info.name） */
@@ -171,6 +175,25 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
     });
   });
 
+  if (agentRegistry) {
+    const skillsShape = extractShape(SkillsListParamsSchema);
+    server.registerTool("skills.list", {
+      description: "List explicit skills available to an agent in its current working directory.",
+      inputSchema: skillsShape,
+    }, async (args) => {
+      const parsed = SkillsListParamsSchema.parse(args);
+      const runtime = resolveRuntimeServices(
+        persistence,
+        publicAssetStorage,
+        publicAssetsDir,
+      );
+      return handleSkillsList({
+        registry: agentRegistry,
+        authContext: runtime.auth,
+      }, parsed);
+    });
+  }
+
   // --- Usage tool ---
   const usageShape = extractShape(UsageSummaryParamsSchema);
   server.registerTool("usage.summary", {
@@ -198,6 +221,7 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
 
   return server;
 }
+
 
 /**
  * Zod object schema から MCP SDK が受け付ける raw shape を抽出する。

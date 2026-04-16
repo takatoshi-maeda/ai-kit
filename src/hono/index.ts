@@ -20,6 +20,7 @@ import type { PublicAssetStorage } from "../agent/public-assets/storage.js";
 import { resolveAiKitOptions } from "../config/resolver.js";
 import type { AgentContext } from "../types/agent.js";
 import type { ConversationalAgent } from "../agent/conversational.js";
+import type { AgentSkillsOptions } from "../types/agent.js";
 import type { AgentRuntimePolicy, ResolvedAgentRuntime } from "../types/runtime.js";
 import { mountSpeechRoutes } from "./speech.js";
 import type { MountSpeechRoutesOptions } from "../speech/types.js";
@@ -63,6 +64,7 @@ export interface AgentDefinition {
     runtime?: ResolvedAgentRuntime,
   ) => ConversationalAgent;
   runtimePolicy?: AgentRuntimePolicy;
+  skills?: AgentSkillsOptions;
 }
 
 export interface AgentGroupAgentDefinition {
@@ -70,6 +72,7 @@ export interface AgentGroupAgentDefinition {
   description?: string;
   create: AgentDefinition["create"];
   runtimePolicy?: AgentRuntimePolicy;
+  skills?: AgentSkillsOptions;
 }
 
 interface AgentGroupDefinitionFields {
@@ -595,6 +598,7 @@ function normalizeAgentGroups(
         description: definition.description,
         create: definition.create,
         runtimePolicy: definition.runtimePolicy,
+        skills: definition.skills,
       },
     ],
   }));
@@ -622,6 +626,7 @@ async function initAgentMounts(
         description: agent.description,
         create: agent.create,
         runtimePolicy: agent.runtimePolicy,
+        skills: agent.skills,
       })),
       defaultAgentId: definition.defaultAgentId,
     });

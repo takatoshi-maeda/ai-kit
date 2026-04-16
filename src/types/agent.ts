@@ -47,6 +47,17 @@ export interface AgentOptions {
   nativeToolRuntime?: NativeToolRuntime;
 }
 
+export interface AgentSkillResolverContext {
+  agentContext: AgentContext;
+  params?: Record<string, unknown>;
+}
+
+export interface AgentSkillsOptions {
+  resolveWorkingDir: (
+    context: AgentSkillResolverContext,
+  ) => string | Promise<string>;
+}
+
 export interface AgentHooks {
   beforeTurn?: BeforeTurnHook[];
   afterTurn?: AfterTurnHook[];

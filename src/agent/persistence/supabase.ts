@@ -5,6 +5,7 @@ import {
 } from "./conversation-assembler.js";
 import type {
   AgentPersistence,
+  AgentSessionState,
   Conversation,
   ConversationSummary,
   ConversationTurn,
@@ -226,6 +227,29 @@ export class SupabasePersistence implements AgentPersistence {
     await this.insertEvent(conversationId, {
       type: "turn",
       data: turn,
+      timestamp,
+    });
+  }
+
+  async appendSessionState(
+    sessionId: string,
+    sessionState: AgentSessionState,
+    options?: {
+      agentId?: string;
+      agentName?: string;
+      title?: string;
+    },
+  ): Promise<void> {
+    const timestamp = new Date().toISOString();
+    const conversationId = await this.ensureConversation(sessionId, options?.agentId, {
+      title: options?.title,
+      agentName: options?.agentName,
+      updatedAt: timestamp,
+    });
+
+    await this.insertEvent(conversationId, {
+      type: "state",
+      data: { sessionState },
       timestamp,
     });
   }

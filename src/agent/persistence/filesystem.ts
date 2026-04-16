@@ -7,6 +7,7 @@ import {
 } from "./conversation-assembler.js";
 import type {
   AgentPersistence,
+  AgentSessionState,
   Conversation,
   ConversationSummary,
   ConversationTurn,
@@ -143,6 +144,40 @@ export class FilesystemPersistence implements AgentPersistence {
     const record: ConversationRecord = {
       type: "turn",
       data: turn,
+      timestamp,
+    };
+    await this.storage.appendText(
+      this.conversationPath(sessionId, conversationAgentId),
+      JSON.stringify(record) + "\n",
+    );
+  }
+
+  async appendSessionState(
+    sessionId: string,
+    sessionState: AgentSessionState,
+    options?: {
+      agentId?: string;
+      agentName?: string;
+      title?: string;
+    },
+  ): Promise<void> {
+    const timestamp = new Date().toISOString();
+    const conversationAgentId = options?.agentId;
+    const existingConversation = await this.readConversation(sessionId, conversationAgentId);
+
+    if (existingConversation?.agentId && conversationAgentId && existingConversation.agentId !== conversationAgentId) {
+      throw new Error(`Conversation agent mismatch for session "${sessionId}"`);
+    }
+    await this.writeConversationMeta(sessionId, conversationAgentId, {
+      title: options?.title,
+      agentId: conversationAgentId,
+      agentName: options?.agentName,
+      timestamp,
+    });
+
+    const record: ConversationRecord = {
+      type: "state",
+      data: { sessionState },
       timestamp,
     };
     await this.storage.appendText(
