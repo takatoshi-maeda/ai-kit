@@ -31,6 +31,7 @@ export type TimelineItem =
       kind: "artifact";
       id: string;
       text: string;
+      path?: string;
       contentType: "artifact";
       status: "running" | "completed";
     };

@@ -748,13 +748,23 @@ function applyStreamEventToTimeline(
       return true;
     }
     case "output_item.added": {
-      timeline.push({
-        kind: "artifact",
-        id: event.itemId,
-        text: "",
-        contentType: event.contentType,
-        status: "running",
-      });
+      const existing = findArtifactTimelineItem(timeline, event.itemId);
+      const path = extractArtifactPath(event.item);
+      if (existing) {
+        existing.status = "running";
+        if (existing.path === undefined && path !== undefined) {
+          existing.path = path;
+        }
+      } else {
+        timeline.push({
+          kind: "artifact",
+          id: event.itemId,
+          text: "",
+          path,
+          contentType: event.contentType,
+          status: "running",
+        });
+      }
       return true;
     }
     case "artifact.delta": {
@@ -775,20 +785,23 @@ function applyStreamEventToTimeline(
       return true;
     }
     case "output_item.done": {
-      for (let index = timeline.length - 1; index >= 0; index -= 1) {
-        const item = timeline[index];
-        if (item?.kind === "artifact" && item.id === event.itemId) {
-          item.status = "completed";
-          return true;
+      const existing = findArtifactTimelineItem(timeline, event.itemId);
+      const path = extractArtifactPath(event.item);
+      if (existing) {
+        existing.status = "completed";
+        if (existing.path === undefined && path !== undefined) {
+          existing.path = path;
         }
+      } else {
+        timeline.push({
+          kind: "artifact",
+          id: event.itemId,
+          text: "",
+          path,
+          contentType: event.contentType,
+          status: "completed",
+        });
       }
-      timeline.push({
-        kind: "artifact",
-        id: event.itemId,
-        text: "",
-        contentType: event.contentType,
-        status: "completed",
-      });
       return true;
     }
     default:
@@ -801,6 +814,25 @@ function toArgumentLines(argumentText: string): string[] | undefined {
     return undefined;
   }
   return argumentText.split("\n");
+}
+
+function findArtifactTimelineItem(
+  timeline: TimelineItem[],
+  itemId: string,
+): Extract<TimelineItem, { kind: "artifact" }> | undefined {
+  for (let index = timeline.length - 1; index >= 0; index -= 1) {
+    const item = timeline[index];
+    if (item?.kind === "artifact" && item.id === itemId) {
+      return item;
+    }
+  }
+  return undefined;
+}
+
+function extractArtifactPath(item: Record<string, unknown>): string | undefined {
+  return typeof item.path === "string" && item.path.length > 0
+    ? item.path
+    : undefined;
 }
 
 function cloneTimeline(timeline: TimelineItem[]): TimelineItem[] {

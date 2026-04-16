@@ -1166,6 +1166,7 @@ describe("agent tools", () => {
             kind: "artifact",
             id: "patch-1",
             text: "*** Begin Patch\n*** End Patch",
+            path: "docs/spec/a.md",
             contentType: "artifact",
             status: "completed",
           },
@@ -1173,6 +1174,115 @@ describe("agent tools", () => {
       } finally {
         await fs.rm(tempDir, { recursive: true, force: true });
       }
+    });
+
+    it("returns artifact path from in-progress timeline snapshots", async () => {
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-artifact-in-progress-"));
+      try {
+        const persistence = new JsonlMcpPersistence(new FileSystemStorage(tempDir));
+        await persistence.appendRunState("sess-artifact-progress", {
+          runId: "run-1",
+          turnId: "turn-1",
+          status: "started",
+          startedAt: "2026-03-17T00:00:00.000Z",
+          updatedAt: "2026-03-17T00:00:01.000Z",
+          userMessage: "Hello",
+          assistantMessage: "",
+          timeline: [
+            {
+              kind: "artifact",
+              id: "patch-1",
+              text: "*** Begin Patch\n*** End Patch",
+              path: "files/inbox/2026/04/small-note-2026-04-16.md",
+              contentType: "artifact",
+              status: "running",
+            },
+          ],
+          agentId: "test",
+        });
+
+        const conversation = await handleConversationsGet(persistence, {
+          sessionId: "sess-artifact-progress",
+          agentId: "test",
+        });
+        const payload = JSON.parse(conversation.content[0].text);
+
+        expect(payload.inProgress.timeline).toEqual([
+          {
+            kind: "artifact",
+            id: "patch-1",
+            text: "*** Begin Patch\n*** End Patch",
+            path: "files/inbox/2026/04/small-note-2026-04-16.md",
+            contentType: "artifact",
+            status: "running",
+          },
+        ]);
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("includes artifact path in streaming run-state snapshots", async () => {
+      function streamingArtifactAgent(ctx: AgentContext): ConversationalAgent {
+        const client: LLMClient = {
+          model: "test-model",
+          provider: "openai",
+          capabilities: defaultCapabilities,
+          async invoke() {
+            throw new Error("invoke should not be called");
+          },
+          async *stream() {
+            yield {
+              type: "output_item.added",
+              itemId: "patch-1",
+              item: { type: "update_file", path: "docs/spec/a.md", diff: "" },
+              contentType: "artifact",
+            };
+            yield {
+              type: "artifact.delta",
+              itemId: "patch-1",
+              delta: "*** Begin Patch\n*** End Patch",
+            };
+            yield { type: "response.completed", result: makeResult("") };
+          },
+          estimateTokens: () => 10,
+        };
+        return new ConversationalAgent({
+          context: ctx,
+          client,
+          instructions: "Streaming artifact agent",
+        });
+      }
+
+      const registry = new AgentRegistry({
+        agents: [{ create: streamingArtifactAgent, agentId: "test" }],
+      });
+      const persistence = stubPersistence();
+      const deps: AgentToolDeps = {
+        registry,
+        persistence,
+        sendNotification: vi.fn(async () => {}),
+      };
+
+      await handleAgentRun(deps, {
+        message: "Hello",
+        agentId: "test",
+        sessionId: "sess-artifact-run-state",
+        stream: true,
+      });
+
+      expect(persistence.appendRunState).toHaveBeenCalledWith(
+        "sess-artifact-run-state",
+        expect.objectContaining({
+          timeline: expect.arrayContaining([
+            expect.objectContaining({
+              kind: "artifact",
+              id: "patch-1",
+              path: "docs/spec/a.md",
+            }),
+          ]),
+        }),
+      );
     });
 
     it("persists lastRuntime in conversations.get payload", async () => {
