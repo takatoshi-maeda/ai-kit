@@ -1,4 +1,6 @@
 import type { ContentPart } from "../../types/llm.js";
+import type { ResolvedAgentRuntime } from "../../types/runtime.js";
+import type { SerializedUsageCostSessionState } from "../../llm/costs.js";
 
 /** タイムラインアイテム（UI 用進捗表示） */
 export type TimelineItem =
@@ -47,6 +49,7 @@ export interface ConversationTurn {
   timeline?: TimelineItem[];
   agentId?: string;
   agentName?: string;
+  runtime?: ResolvedAgentRuntime;
 }
 
 /** 会話全体 */
@@ -67,10 +70,15 @@ export interface Conversation {
     userContent?: string | ContentPart[];
     assistantMessage?: string;
     timeline?: TimelineItem[];
+    metadata?: {
+      usageCostSession?: SerializedUsageCostSessionState;
+    };
     agentId?: string;
     agentName?: string;
+    runtime?: ResolvedAgentRuntime;
   };
   turns: ConversationTurn[];
+  lastRuntime?: ResolvedAgentRuntime;
 }
 
 /** 会話サマリー（一覧用） */
@@ -117,8 +125,12 @@ export interface RunState {
   userContent?: string | ContentPart[];
   assistantMessage?: string;
   timeline?: TimelineItem[];
+  metadata?: {
+    usageCostSession?: SerializedUsageCostSessionState;
+  };
   agentId?: string;
   agentName?: string;
+  runtime?: ResolvedAgentRuntime;
 }
 
 export interface PersistenceHealthResult {

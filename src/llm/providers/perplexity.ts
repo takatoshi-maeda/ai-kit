@@ -12,6 +12,7 @@ import type { ModelCapabilities } from "../../types/model.js";
 import type { LLMClient, PerplexityClientOptions } from "../client.js";
 import { withRetry } from "../retry.js";
 import { LLMApiError, RateLimitError } from "../../errors.js";
+import { withComputedUsageCost } from "../costs.js";
 
 const PERPLEXITY_BASE_URL = "https://api.perplexity.ai";
 
@@ -187,7 +188,7 @@ export class PerplexityClient implements LLMClient {
   private mapUsage(usage?: OpenAI.CompletionUsage): LLMUsage {
     if (!usage) return emptyUsage();
 
-    return {
+    return withComputedUsageCost(this.provider, this.model, {
       inputTokens: usage.prompt_tokens,
       outputTokens: usage.completion_tokens,
       cachedInputTokens: 0,
@@ -196,7 +197,7 @@ export class PerplexityClient implements LLMClient {
       outputCost: 0,
       cacheCost: 0,
       totalCost: 0,
-    };
+    });
   }
 
   private mapError(error: unknown): Error {

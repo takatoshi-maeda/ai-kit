@@ -51,6 +51,7 @@ interface ConversationRunStateRow extends Record<string, unknown> {
   user_content: RunState["userContent"] | null;
   assistant_message: string | null;
   timeline: RunState["timeline"] | null;
+  metadata: RunState["metadata"] | null;
   agent_id: string | null;
   agent_name: string | null;
   created_at: string;
@@ -526,9 +527,9 @@ export class PostgresPersistence implements AgentPersistence {
       `
         insert into ${this.table("conversation_run_states")} (
           conversation_id, run_id, turn_id, status, started_at, updated_at,
-          user_message, user_content, assistant_message, timeline,
+          user_message, user_content, assistant_message, timeline, metadata,
           agent_id, agent_name, created_at
-        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+        ) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
         on conflict (conversation_id, run_id)
         do update set
           turn_id = excluded.turn_id,
@@ -539,6 +540,7 @@ export class PostgresPersistence implements AgentPersistence {
           user_content = excluded.user_content,
           assistant_message = excluded.assistant_message,
           timeline = excluded.timeline,
+          metadata = excluded.metadata,
           agent_id = excluded.agent_id,
           agent_name = excluded.agent_name
       `,
@@ -553,6 +555,7 @@ export class PostgresPersistence implements AgentPersistence {
         state.userContent ?? null,
         state.assistantMessage ?? null,
         state.timeline ?? null,
+        state.metadata ?? null,
         state.agentId ?? null,
         state.agentName ?? null,
         timestamp,
@@ -642,6 +645,7 @@ function toRunState(row?: ConversationRunStateRow): RunState | undefined {
     userContent: row.user_content ?? undefined,
     assistantMessage: row.assistant_message ?? undefined,
     timeline: row.timeline ?? undefined,
+    metadata: row.metadata ?? undefined,
     agentId: row.agent_id ?? undefined,
     agentName: row.agent_name ?? undefined,
   };

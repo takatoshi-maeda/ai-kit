@@ -21,6 +21,7 @@ import {
 } from "../../errors.js";
 import type { ToolDefinition } from "../../types/tool.js";
 import { resolveGoogleClientOptions } from "../../google/client-options.js";
+import { withComputedUsageCost } from "../costs.js";
 
 export class GoogleClient implements LLMClient {
   readonly provider = "google" as const;
@@ -363,7 +364,7 @@ export class GoogleClient implements LLMClient {
   ): LLMUsage {
     if (!usage) return emptyUsage();
 
-    return {
+    return withComputedUsageCost(this.provider, this.model, {
       inputTokens: usage.promptTokenCount ?? 0,
       outputTokens: usage.candidatesTokenCount ?? 0,
       cachedInputTokens: usage.cachedContentTokenCount ?? 0,
@@ -372,7 +373,7 @@ export class GoogleClient implements LLMClient {
       outputCost: 0,
       cacheCost: 0,
       totalCost: 0,
-    };
+    });
   }
 
   private mapError(error: unknown): Error {

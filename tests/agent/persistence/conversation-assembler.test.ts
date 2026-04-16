@@ -34,6 +34,22 @@ describe("conversation-assembler", () => {
         startedAt: "2026-03-17T00:00:02.000Z",
         updatedAt: "2026-03-17T00:00:03.000Z",
         userMessage: "Working...",
+        metadata: {
+          usageCostSession: {
+            cumulativeUsageByModel: {
+              "openai:gpt-5.4": {
+                inputTokens: 1,
+                outputTokens: 2,
+                cachedInputTokens: 0,
+                totalTokens: 3,
+                inputCost: 4,
+                outputCost: 5,
+                cacheCost: 0,
+                totalCost: 9,
+              },
+            },
+          },
+        },
         agentId: "front-desk",
         agentName: "Front Desk",
       },
@@ -57,6 +73,22 @@ describe("conversation-assembler", () => {
         userContent: undefined,
         assistantMessage: undefined,
         timeline: undefined,
+        metadata: {
+          usageCostSession: {
+            cumulativeUsageByModel: {
+              "openai:gpt-5.4": {
+                inputTokens: 1,
+                outputTokens: 2,
+                cachedInputTokens: 0,
+                totalTokens: 3,
+                inputCost: 4,
+                outputCost: 5,
+                cacheCost: 0,
+                totalCost: 9,
+              },
+            },
+          },
+        },
         agentId: "front-desk",
         agentName: "Front Desk",
       },

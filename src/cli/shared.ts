@@ -200,6 +200,7 @@ function requiredPersistenceTableColumns(
         "user_content",
         "assistant_message",
         "timeline",
+        "metadata",
         "agent_id",
         "agent_name",
         "created_at",
@@ -666,6 +667,10 @@ function buildPersistenceMigrations(
       version: "20260319000000",
       statements: buildRunStateSnapshotMigrationStatements(schema, tablePrefix),
     },
+    {
+      version: "20260416000000",
+      statements: buildRunStateMetadataMigrationStatements(schema, tablePrefix),
+    },
   ];
 }
 
@@ -810,7 +815,14 @@ function buildRunStateSnapshotMigrationStatements(schema: string, tablePrefix: s
     `  foreign key (conversation_id) references ${conversations} (id) on delete cascade`,
     ");",
     `create index if not exists ${quoteIdentifier(`${tablePrefix}conversation_run_states_conversation_updated_idx`)}`,
-    `  on ${runStates} (conversation_id, updated_at desc);`,
+      `  on ${runStates} (conversation_id, updated_at desc);`,
+  ];
+}
+
+function buildRunStateMetadataMigrationStatements(schema: string, tablePrefix: string): string[] {
+  const runStates = qualifiedTable(schema, `${tablePrefix}conversation_run_states`);
+  return [
+    `alter table ${runStates} add column if not exists metadata jsonb null;`,
   ];
 }
 

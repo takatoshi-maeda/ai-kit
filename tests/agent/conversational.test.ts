@@ -36,12 +36,25 @@ function stubHistory(): ConversationHistory {
 
 function trackingHistory(): {
   history: ConversationHistory;
-  messages: { role: string; content: string | unknown[] }[];
+  messages: Array<{
+    role: string;
+    content: string | unknown[];
+    metadata?: Record<string, unknown>;
+  }>;
 } {
-  const messages: { role: string; content: string | unknown[] }[] = [];
+  const messages: Array<{
+    role: string;
+    content: string | unknown[];
+    metadata?: Record<string, unknown>;
+  }> = [];
   const history: ConversationHistory = {
     async getMessages() {
-      return [];
+      return messages.map((message) => ({
+        role: message.role as "user" | "assistant" | "system" | "tool",
+        content: message.content,
+        metadata: message.metadata,
+        timestamp: new Date(),
+      }));
     },
     async addMessage(msg) {
       messages.push(msg);
@@ -511,6 +524,145 @@ describe("ConversationalAgent", () => {
       expect(agentResult.usage.totalCost).toBeCloseTo(0.004);
     });
 
+    it("recomputes cumulative OpenAI session cost from total input tokens", async () => {
+      const tool = defineTool({
+        name: "noop",
+        description: "No-op",
+        parameters: z.object({}),
+        execute: async () => "ok",
+      });
+
+      const perTurnUsage: LLMUsage = {
+        inputTokens: 200_000,
+        outputTokens: 100_000,
+        cachedInputTokens: 0,
+        totalTokens: 300_000,
+        inputCost: 0.5,
+        outputCost: 1.5,
+        cacheCost: 0,
+        totalCost: 2,
+      };
+      const r1 = makeResult({
+        toolCalls: [{ id: "tc-1", name: "noop", arguments: {} }],
+      });
+      r1.usage = { ...perTurnUsage };
+      const r2 = makeResult({ content: "Done" });
+      r2.usage = { ...perTurnUsage };
+
+      const client = mockClient([r1, r2]);
+      const context = new AgentContextImpl({ history: stubHistory() });
+
+      const agent = new ConversationalAgent({
+        context,
+        client: { ...client, model: "gpt-5.4" },
+        instructions: "Test",
+        tools: [tool],
+      });
+
+      const agentResult = await agent.invoke("Go");
+
+      expect(agentResult.usage.inputTokens).toBe(400_000);
+      expect(agentResult.usage.outputTokens).toBe(200_000);
+      expect(agentResult.usage.totalTokens).toBe(600_000);
+      expect(agentResult.usage.totalCost).toBeCloseTo(6.5);
+    });
+
+    it("restores cumulative usage cost state from persisted history across runs", async () => {
+      const tracked = trackingHistory();
+
+      const firstRunResult = makeResult({ content: "First" });
+      firstRunResult.usage = {
+        inputTokens: 200_000,
+        outputTokens: 100_000,
+        cachedInputTokens: 0,
+        totalTokens: 300_000,
+        inputCost: 0.5,
+        outputCost: 1.5,
+        cacheCost: 0,
+        totalCost: 2,
+      };
+
+      const secondRunResult = makeResult({ content: "Second" });
+      secondRunResult.usage = {
+        inputTokens: 200_000,
+        outputTokens: 100_000,
+        cachedInputTokens: 0,
+        totalTokens: 300_000,
+        inputCost: 0.5,
+        outputCost: 1.5,
+        cacheCost: 0,
+        totalCost: 2,
+      };
+
+      const firstAgent = new ConversationalAgent({
+        context: new AgentContextImpl({ history: tracked.history, sessionId: "session-1" }),
+        client: { ...mockClient([firstRunResult]), model: "gpt-5.4" },
+        instructions: "Test",
+      });
+      const firstResult = await firstAgent.invoke("Go");
+      expect(firstResult.usage.totalCost).toBeCloseTo(2);
+
+      const secondAgent = new ConversationalAgent({
+        context: new AgentContextImpl({ history: tracked.history, sessionId: "session-1" }),
+        client: { ...mockClient([secondRunResult]), model: "gpt-5.4" },
+        instructions: "Test",
+      });
+      const secondResult = await secondAgent.invoke("Go again");
+
+      expect(secondResult.usage.totalCost).toBeCloseTo(4.5);
+      const persistedAssistantMessages = tracked.messages.filter((message) => message.role === "assistant");
+      expect(
+        persistedAssistantMessages.at(-1)?.metadata?.usageCostSession,
+      ).toMatchObject({
+        cumulativeUsageByModel: {
+          "openai:gpt-5.4": {
+            inputTokens: 400_000,
+            outputTokens: 200_000,
+            totalTokens: 600_000,
+          },
+        },
+      });
+    });
+
+    it("restores cumulative usage cost state from context metadata", async () => {
+      const result = makeResult({ content: "Second" });
+      result.usage = {
+        inputTokens: 200_000,
+        outputTokens: 100_000,
+        cachedInputTokens: 0,
+        totalTokens: 300_000,
+        inputCost: 0.5,
+        outputCost: 1.5,
+        cacheCost: 0,
+        totalCost: 2,
+      };
+      const client = { ...mockClient([result]), model: "gpt-5.4" };
+      const context = new AgentContextImpl({ history: stubHistory(), sessionId: "session-1" });
+      context.metadata.set("usageCostSession", {
+        cumulativeUsageByModel: {
+          "openai:gpt-5.4": {
+            inputTokens: 200_000,
+            outputTokens: 100_000,
+            cachedInputTokens: 0,
+            totalTokens: 300_000,
+            inputCost: 0.5,
+            outputCost: 1.5,
+            cacheCost: 0,
+            totalCost: 2,
+          },
+        },
+      });
+
+      const agent = new ConversationalAgent({
+        context,
+        client,
+        instructions: "Test",
+      });
+
+      const secondResult = await agent.invoke("Go again");
+      expect(secondResult.usage.totalCost).toBeCloseTo(4.5);
+    });
+
     it("throws MaxTurnsExceededError when limit reached", async () => {
       const tool = defineTool({
         name: "loop",
@@ -843,7 +995,7 @@ describe("ConversationalAgent", () => {
 
       expect(savedMessages).toHaveLength(2);
       expect(savedMessages[0]).toEqual({ role: "user", content: "Hi" });
-      expect(savedMessages[1]).toEqual({ role: "assistant", content: "Hello back" });
+      expect(savedMessages[1]).toMatchObject({ role: "assistant", content: "Hello back" });
     });
   });
 });

@@ -105,6 +105,10 @@ describe("OpenAIClient", () => {
       expect(result.usage.inputTokens).toBe(10);
       expect(result.usage.outputTokens).toBe(5);
       expect(result.usage.cachedInputTokens).toBe(2);
+      expect(result.usage.inputCost).toBeCloseTo(0.00002125);
+      expect(result.usage.cacheCost).toBeCloseTo(0.0000005);
+      expect(result.usage.outputCost).toBeCloseTo(0.000075);
+      expect(result.usage.totalCost).toBeCloseTo(0.00009675);
     });
 
     it("maps function calls to tool_use result", async () => {

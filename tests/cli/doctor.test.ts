@@ -93,6 +93,7 @@ describe("runDoctorCommand", () => {
         expect.objectContaining({ name: "20260317000000", ok: true, detail: "applied" }),
         expect.objectContaining({ name: "20260318000000", ok: false, detail: "pending" }),
         expect.objectContaining({ name: "20260319000000", ok: false, detail: "pending" }),
+        expect.objectContaining({ name: "20260416000000", ok: false, detail: "pending" }),
       ]),
     );
   });
@@ -157,6 +158,7 @@ describe("runDoctorCommand", () => {
         expect.objectContaining({ name: "20260317000000", ok: true, detail: "applied" }),
         expect.objectContaining({ name: "20260318000000", ok: false, detail: "pending" }),
         expect.objectContaining({ name: "20260319000000", ok: false, detail: "pending" }),
+        expect.objectContaining({ name: "20260416000000", ok: false, detail: "pending" }),
       ]),
     );
   });

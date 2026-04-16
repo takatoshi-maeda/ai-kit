@@ -20,6 +20,7 @@ import type { LLMClient } from "../../../../src/types/agent.js";
 import type { ContentPart, LLMResult, LLMUsage } from "../../../../src/types/llm.js";
 import type { LLMStreamEvent } from "../../../../src/types/stream-events.js";
 import type { ModelCapabilities } from "../../../../src/types/model.js";
+import type { AgentRuntimePolicy, ResolvedAgentRuntime } from "../../../../src/types/runtime.js";
 
 // --- Helpers ---
 
@@ -85,6 +86,18 @@ const defaultCapabilities: ModelCapabilities = {
   contextWindowSize: 128000,
 };
 
+const openAiRuntimePolicy: AgentRuntimePolicy = {
+  provider: "openai",
+  defaults: {
+    model: "gpt-5.4",
+    reasoningEffort: "medium",
+    verbosity: "medium",
+  },
+  allowedModels: ["gpt-5.4", "gpt-5.2"],
+  allowedReasoningEfforts: ["low", "medium", "high"],
+  allowedVerbosity: ["low", "medium", "high"],
+};
+
 function mockClient(content: string): LLMClient {
   const result = makeResult(content);
   return {
@@ -117,7 +130,12 @@ describe("agent tools", () => {
     it("returns list of registered agents", async () => {
       const registry = new AgentRegistry({
         agents: [
-          { create: createTestAgent, agentId: "test", description: "A test agent" },
+          {
+            create: createTestAgent,
+            agentId: "test",
+            description: "A test agent",
+            runtimePolicy: openAiRuntimePolicy,
+          },
         ],
       });
       const persistence = stubPersistence();
@@ -128,7 +146,21 @@ describe("agent tools", () => {
 
       expect(payload.defaultAgentId).toBe("test");
       expect(payload.agents).toEqual([
-        { agentId: "test", description: "A test agent" },
+        {
+          agentId: "test",
+          description: "A test agent",
+          runtimePolicy: {
+            provider: "openai",
+            defaults: {
+              model: "gpt-5.4",
+              reasoningEffort: "medium",
+              verbosity: "medium",
+            },
+            allowedModels: ["gpt-5.4", "gpt-5.2"],
+            allowedReasoningEfforts: ["low", "medium", "high"],
+            allowedVerbosity: ["low", "medium", "high"],
+          },
+        },
       ]);
       expect(result.structuredContent).toEqual(payload);
       expect(result.isError).toBe(false);
@@ -182,6 +214,82 @@ describe("agent tools", () => {
         }),
         "Test Title",
       );
+    });
+
+    it("resolves runtime overrides, passes them to the agent, and returns them", async () => {
+      const seenRuntime: ResolvedAgentRuntime[] = [];
+      function runtimeAwareAgent(
+        ctx: AgentContext,
+        _params?: Record<string, unknown>,
+        runtime?: ResolvedAgentRuntime,
+      ): ConversationalAgent {
+        if (runtime) {
+          seenRuntime.push(runtime);
+        }
+        return new ConversationalAgent({
+          context: ctx,
+          client: mockClient("Runtime response"),
+          instructions: "Runtime agent",
+        });
+      }
+
+      const registry = new AgentRegistry({
+        agents: [{
+          create: runtimeAwareAgent,
+          agentId: "test",
+          runtimePolicy: openAiRuntimePolicy,
+        }],
+      });
+      const persistence = stubPersistence();
+      const deps: AgentToolDeps = { registry, persistence };
+
+      const result = await handleAgentRun(deps, {
+        message: "Hello",
+        agentId: "test",
+        runtime: {
+          model: "gpt-5.2",
+          reasoningEffort: "high",
+          verbosity: "low",
+        },
+      });
+
+      expect(seenRuntime).toEqual([{
+        model: "gpt-5.2",
+        reasoningEffort: "high",
+        verbosity: "low",
+      }]);
+
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.runtime).toEqual({
+        model: "gpt-5.2",
+        reasoningEffort: "high",
+        verbosity: "low",
+      });
+      expect(persistence.appendConversationTurn).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({
+          runtime: {
+            model: "gpt-5.2",
+            reasoningEffort: "high",
+            verbosity: "low",
+          },
+        }),
+        undefined,
+      );
+    });
+
+    it("rejects runtime overrides when the agent has no runtime policy", async () => {
+      const registry = new AgentRegistry({
+        agents: [{ create: createTestAgent, agentId: "test" }],
+      });
+      const persistence = stubPersistence();
+      const deps: AgentToolDeps = { registry, persistence };
+
+      await expect(handleAgentRun(deps, {
+        message: "Hello",
+        agentId: "test",
+        runtime: { model: "gpt-5.2" },
+      })).rejects.toThrow(/runtime overrides are not enabled/);
     });
 
     it("records input message history", async () => {
@@ -889,6 +997,78 @@ describe("agent tools", () => {
       }
     });
 
+    it("persists usage cost session state in streaming run snapshots", async () => {
+      function streamingAgent(ctx: AgentContext): ConversationalAgent {
+        const client: LLMClient = {
+          model: "gpt-5.4",
+          provider: "openai",
+          capabilities: defaultCapabilities,
+          async invoke() {
+            throw new Error("invoke should not be called");
+          },
+          async *stream() {
+            yield { type: "text.delta", delta: "Done." };
+            yield {
+              type: "response.completed",
+              result: {
+                ...makeResult("Done."),
+                usage: {
+                  inputTokens: 200_000,
+                  outputTokens: 100_000,
+                  cachedInputTokens: 0,
+                  totalTokens: 300_000,
+                  inputCost: 0.5,
+                  outputCost: 1.5,
+                  cacheCost: 0,
+                  totalCost: 2,
+                },
+              },
+            };
+          },
+          estimateTokens: () => 10,
+        };
+        return new ConversationalAgent({
+          context: ctx,
+          client,
+          instructions: "Streaming agent",
+        });
+      }
+
+      const registry = new AgentRegistry({
+        agents: [{ create: streamingAgent, agentId: "test" }],
+      });
+      const persistence = stubPersistence();
+      const deps: AgentToolDeps = {
+        registry,
+        persistence,
+        sendNotification: vi.fn(async () => {}),
+      };
+
+      await handleAgentRun(deps, {
+        message: "Hello",
+        agentId: "test",
+        sessionId: "sess-usage-state",
+        stream: true,
+      });
+
+      expect(persistence.appendRunState).toHaveBeenCalledWith(
+        "sess-usage-state",
+        expect.objectContaining({
+          metadata: {
+            usageCostSession: {
+              cumulativeUsageByModel: {
+                "openai:gpt-5.4": expect.objectContaining({
+                  inputTokens: 200_000,
+                  outputTokens: 100_000,
+                  totalTokens: 300_000,
+                }),
+              },
+            },
+          },
+        }),
+      );
+    });
+
     it("forwards artifact stream notifications and persists artifact timeline items", async () => {
       const notifications: Array<{ method: string; params: Record<string, unknown> }> = [];
       function streamingArtifactAgent(ctx: AgentContext): ConversationalAgent {
@@ -990,6 +1170,73 @@ describe("agent tools", () => {
             status: "completed",
           },
         ]);
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
+    it("persists lastRuntime in conversations.get payload", async () => {
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-runtime-"));
+      try {
+        const seenRuntime: ResolvedAgentRuntime[] = [];
+        function runtimeAwareAgent(
+          ctx: AgentContext,
+          _params?: Record<string, unknown>,
+          runtime?: ResolvedAgentRuntime,
+        ): ConversationalAgent {
+          if (runtime) {
+            seenRuntime.push(runtime);
+          }
+          return new ConversationalAgent({
+            context: ctx,
+            client: mockClient("Runtime response"),
+            instructions: "Runtime agent",
+          });
+        }
+
+        const registry = new AgentRegistry({
+          agents: [{
+            create: runtimeAwareAgent,
+            agentId: "test",
+            runtimePolicy: openAiRuntimePolicy,
+          }],
+        });
+        const persistence = new JsonlMcpPersistence(new FileSystemStorage(tempDir));
+        const deps: AgentToolDeps = { registry, persistence };
+
+        await handleAgentRun(deps, {
+          message: "Hello",
+          agentId: "test",
+          sessionId: "sess-runtime",
+          runtime: {
+            model: "gpt-5.2",
+            reasoningEffort: "high",
+            verbosity: "low",
+          },
+        });
+
+        expect(seenRuntime).toEqual([{
+          model: "gpt-5.2",
+          reasoningEffort: "high",
+          verbosity: "low",
+        }]);
+
+        const conversation = await handleConversationsGet(persistence, {
+          sessionId: "sess-runtime",
+          agentId: "test",
+        });
+        const payload = JSON.parse(conversation.content[0].text);
+
+        expect(payload.lastRuntime).toEqual({
+          model: "gpt-5.2",
+          reasoningEffort: "high",
+          verbosity: "low",
+        });
+        expect(payload.turns[0].runtime).toEqual({
+          model: "gpt-5.2",
+          reasoningEffort: "high",
+          verbosity: "low",
+        });
       } finally {
         await fs.rm(tempDir, { recursive: true, force: true });
       }

@@ -74,10 +74,16 @@ export function assembleConversation(
       userContent: latestRunState.userContent,
       assistantMessage: latestRunState.assistantMessage,
       timeline: latestRunState.timeline,
+      metadata: latestRunState.metadata,
       agentId: latestRunState.agentId,
       agentName: latestRunState.agentName,
+      runtime: latestRunState.runtime,
     };
   }
+
+  conversation.lastRuntime =
+    conversation.inProgress?.runtime ??
+    conversation.turns[conversation.turns.length - 1]?.runtime;
 
   return conversation;
 }

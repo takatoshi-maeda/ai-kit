@@ -34,6 +34,10 @@ interface StoredConversationMeta extends ConversationMetaRecord {
   updatedAt: string;
 }
 
+interface StoredRunState extends RunState {
+  metadata?: RunState["metadata"];
+}
+
 /**
  * JSONL ファイルベースの AgentPersistence 実装。
  * DataStorage 上に会話・使用量・冪等性レコードを JSONL 形式で保存する。
@@ -161,7 +165,7 @@ export class FilesystemPersistence implements AgentPersistence {
 
     await this.storage.writeText(
       this.runStatePath(sessionId, state.runId, conversationAgentId),
-      JSON.stringify(state),
+      JSON.stringify(state satisfies StoredRunState),
     );
   }
 
@@ -318,7 +322,7 @@ export class FilesystemPersistence implements AgentPersistence {
     for (const runId of runIds) {
       const raw = await this.storage.readText(this.runStatePath(sessionId, runId, agentId));
       if (!raw) continue;
-      const parsed = JSON.parse(raw) as RunState;
+      const parsed = JSON.parse(raw) as StoredRunState;
       if (!latest || parsed.updatedAt.localeCompare(latest.updatedAt) > 0) {
         latest = parsed;
       }

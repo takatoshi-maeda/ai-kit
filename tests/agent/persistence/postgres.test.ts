@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { PostgresPersistence } from "../../../src/agent/persistence/postgres.js";
 import { createFakePostgresSql } from "../../helpers/fake-postgres.js";
 
@@ -71,30 +71,37 @@ describe("PostgresPersistence", () => {
       sql,
     });
 
-    await persistence.appendConversationTurn("session-1", {
-      turnId: "turn-1",
-      runId: "run-1",
-      timestamp: "2026-03-17T00:00:00.000Z",
-      userMessage: "Hello",
-      assistantMessage: "Hi",
-      status: "success",
-      agentId: "chat-app",
-    });
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-03-17T00:00:00.000Z"));
 
-    await persistence.appendUsage(0.1, "usd");
+      await persistence.appendConversationTurn("session-1", {
+        turnId: "turn-1",
+        runId: "run-1",
+        timestamp: "2026-03-17T00:00:00.000Z",
+        userMessage: "Hello",
+        assistantMessage: "Hi",
+        status: "success",
+        agentId: "chat-app",
+      });
 
-    const summaries = await persistence.listConversationSummaries();
-    const usage = await persistence.summarizeUsage("2026-03");
+      await persistence.appendUsage(0.1, "usd");
 
-    expect(summaries).toHaveLength(1);
-    expect(summaries[0]?.updatedAt).toMatch(/^2026-03-\d{2}T/);
-    expect(usage).toEqual({
-      period: "2026-03",
-      cost: {
-        totalUsd: 0.1,
-        totalByCurrency: { usd: 0.1 },
-      },
-    });
+      const summaries = await persistence.listConversationSummaries();
+      const usage = await persistence.summarizeUsage("2026-03");
+
+      expect(summaries).toHaveLength(1);
+      expect(summaries[0]?.updatedAt).toMatch(/^2026-03-\d{2}T/);
+      expect(usage).toEqual({
+        period: "2026-03",
+        cost: {
+          totalUsd: 0.1,
+          totalByCurrency: { usd: 0.1 },
+        },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("writes and reads idempotency records", async () => {

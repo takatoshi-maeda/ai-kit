@@ -22,6 +22,13 @@ import {
 import { ToolExecutor } from "../llm/tool/executor.js";
 import { toolCallsToMessages } from "../llm/tool/message-converter.js";
 import {
+  appendUsageToSerializedUsageCostSessionState,
+  computeBilledUsageDeltaFromSessionState,
+  createUsageCostSessionRunner,
+  getUsageFromSerializedUsageCostSessionState,
+  type SerializedUsageCostSessionState,
+} from "../llm/costs.js";
+import {
   runWithObservationContext,
   startObservation,
   withObservation,
@@ -39,6 +46,7 @@ export interface AgentStream extends AsyncIterable<LLMStreamEvent> {
 }
 
 const DEFAULT_MAX_TURNS = 10;
+const USAGE_COST_SESSION_METADATA_KEY = "usageCostSession";
 
 export class ConversationalAgent {
   protected readonly options: AgentOptions;
@@ -55,8 +63,9 @@ export class ConversationalAgent {
     input: string | ContentPart[],
     additionalInstructions?: string,
   ): AgentStream {
+    const self = this;
     const observationName =
-      this.options.context.selectedAgentName?.trim() || "agent.run";
+      self.options.context.selectedAgentName?.trim() || "agent.run";
     const observationPromise = startObservation(observationName, {
       type: "span",
       input: {
@@ -64,10 +73,10 @@ export class ConversationalAgent {
         additionalInstructions,
       },
       metadata: {
-        sessionId: this.options.context.sessionId,
-        selectedAgentName: this.options.context.selectedAgentName,
-        provider: this.options.client.provider,
-        model: this.options.client.model,
+        sessionId: self.options.context.sessionId,
+        selectedAgentName: self.options.context.selectedAgentName,
+        provider: self.options.client.provider,
+        model: self.options.client.model,
       },
     });
     let observationEnded = false;
@@ -89,7 +98,7 @@ export class ConversationalAgent {
             metadata: {
               responseId: result.responseId,
               toolCalls: result.toolCalls.length,
-              turns: this.options.context.turns.length,
+              turns: self.options.context.turns.length,
             },
           });
         } else if (error) {
@@ -118,14 +127,21 @@ export class ConversationalAgent {
       rejectResult = rej;
     });
 
-    const gen = this.runLoop(input, additionalInstructions);
+    let usageCostSession: ReturnType<typeof createUsageCostSessionRunner> | null = null;
+    const gen = self.runLoop(input, additionalInstructions, () => usageCostSession);
 
     const wrappedIterator: AsyncIterableIterator<LLMStreamEvent> = {
-      async next() {
+      next: async () => {
         try {
-          const iterResult = await runWithObservationContext(
-            await observationPromise,
-            () => gen.next(),
+          const observation = await observationPromise;
+          usageCostSession ??= createUsageCostSessionRunner(
+            await self.restoreUsageCostSessionState(),
+          );
+          const iterResult = await usageCostSession.run(() =>
+            runWithObservationContext(
+              observation,
+              () => gen.next(),
+            ),
           );
           if (iterResult.done) {
             await finishObservation(iterResult.value);
@@ -140,17 +156,21 @@ export class ConversationalAgent {
           throw error;
         }
       },
-      async return() {
-        const r = await runWithObservationContext(
-          await observationPromise,
-          () => gen.return(undefined as unknown as AgentResult),
+      return: async () => {
+        const observation = await observationPromise;
+        usageCostSession ??= createUsageCostSessionRunner(
+          await self.restoreUsageCostSessionState(),
+        );
+        const r = await usageCostSession.run(() =>
+          runWithObservationContext(
+            observation,
+            () => gen.return(undefined as unknown as AgentResult),
+          ),
         );
         await finishObservation();
         return { done: true as const, value: r.value as unknown as LLMStreamEvent };
       },
-      [Symbol.asyncIterator]() {
-        return this;
-      },
+      [Symbol.asyncIterator]: () => wrappedIterator,
     };
 
     return {
@@ -159,6 +179,23 @@ export class ConversationalAgent {
       },
       result: resultPromise,
     };
+  }
+
+  private async restoreUsageCostSessionState(): Promise<SerializedUsageCostSessionState | undefined> {
+    const fromMetadata = this.options.context.metadata.get(USAGE_COST_SESSION_METADATA_KEY);
+    if (isSerializedUsageCostSessionState(fromMetadata)) {
+      return fromMetadata;
+    }
+
+    const messages = await this.options.context.history.getMessages();
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      const metadata = messages[index]?.metadata?.[USAGE_COST_SESSION_METADATA_KEY];
+      if (isSerializedUsageCostSessionState(metadata)) {
+        this.options.context.metadata.set(USAGE_COST_SESSION_METADATA_KEY, metadata);
+        return metadata;
+      }
+    }
+    return undefined;
   }
 
   async invoke(
@@ -198,6 +235,7 @@ export class ConversationalAgent {
   private async *runLoop(
     input: string | ContentPart[],
     additionalInstructions?: string,
+    getUsageCostSession?: () => ReturnType<typeof createUsageCostSessionRunner> | null,
   ): AsyncGenerator<LLMStreamEvent, AgentResult> {
     const {
       context,
@@ -219,6 +257,12 @@ export class ConversationalAgent {
     let pendingMessages: LLMMessage[] = [...conversationMessages];
 
     const totalUsage = emptyUsage();
+    const rawRunUsage = emptyUsage();
+    const restoredUsageCostSession = isSerializedUsageCostSessionState(
+      context.metadata.get(USAGE_COST_SESSION_METADATA_KEY),
+    )
+      ? context.metadata.get(USAGE_COST_SESSION_METADATA_KEY) as SerializedUsageCostSessionState
+      : undefined;
     let currentTurn = 0;
 
     while (currentTurn < maxTurns) {
@@ -252,7 +296,14 @@ export class ConversationalAgent {
         client.stream(chatInput),
       );
 
+      addUsage(rawRunUsage, turnLLMResult.usage);
       addUsage(totalUsage, turnLLMResult.usage);
+      Object.assign(totalUsage, computeBilledUsageDeltaFromSessionState(
+        restoredUsageCostSession,
+        client.provider,
+        client.model,
+        rawRunUsage,
+      ));
       if (turnLLMResult.responseId) {
         context.metadata.set("previousResponseId", turnLLMResult.responseId);
       }
@@ -347,9 +398,57 @@ export class ConversationalAgent {
         });
       }
       if (turnLLMResult.content) {
+        const usageCostSession = getUsageCostSession?.();
+        const restoredUsageCostSession = this.options.context.metadata.get(
+          USAGE_COST_SESSION_METADATA_KEY,
+        );
+        const restoredSerializedUsageCostSession = isSerializedUsageCostSessionState(
+          restoredUsageCostSession,
+        )
+          ? restoredUsageCostSession
+          : undefined;
+        const runnerSerializedUsageCostSession = usageCostSession?.serialize();
+        const runnerUsage = getUsageFromSerializedUsageCostSessionState(
+          runnerSerializedUsageCostSession,
+          client.provider,
+          client.model,
+        );
+        const restoredUsage = getUsageFromSerializedUsageCostSessionState(
+          restoredSerializedUsageCostSession,
+          client.provider,
+          client.model,
+        );
+        const runnerIncludesCurrentRun = runnerUsage.inputTokens - restoredUsage.inputTokens >=
+            rawRunUsage.inputTokens &&
+          runnerUsage.outputTokens - restoredUsage.outputTokens >=
+            rawRunUsage.outputTokens &&
+          runnerUsage.cachedInputTokens - restoredUsage.cachedInputTokens >=
+            rawRunUsage.cachedInputTokens;
+        const serializedUsageCostSession = runnerIncludesCurrentRun &&
+            hasSerializedUsageCostSessionEntries(runnerSerializedUsageCostSession)
+          ? runnerSerializedUsageCostSession
+          : appendUsageToSerializedUsageCostSessionState(
+              hasSerializedUsageCostSessionEntries(runnerSerializedUsageCostSession)
+                ? runnerSerializedUsageCostSession
+                : restoredSerializedUsageCostSession,
+              client.provider,
+              client.model,
+              rawRunUsage,
+            );
+        if (serializedUsageCostSession) {
+          context.metadata.set(
+            USAGE_COST_SESSION_METADATA_KEY,
+            serializedUsageCostSession,
+          );
+        }
         await context.history.addMessage({
           role: "assistant",
           content: turnLLMResult.content,
+          metadata: serializedUsageCostSession
+            ? {
+                [USAGE_COST_SESSION_METADATA_KEY]: serializedUsageCostSession,
+              }
+            : undefined,
         });
       }
 
@@ -510,6 +609,25 @@ export class ConversationalAgent {
       }
     }
   }
+}
+
+function isSerializedUsageCostSessionState(
+  value: unknown,
+): value is SerializedUsageCostSessionState {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+  const record = value as Record<string, unknown>;
+  const cumulativeUsageByModel = record.cumulativeUsageByModel;
+  return !!cumulativeUsageByModel &&
+    typeof cumulativeUsageByModel === "object" &&
+    !Array.isArray(cumulativeUsageByModel);
+}
+
+function hasSerializedUsageCostSessionEntries(
+  value: SerializedUsageCostSessionState | undefined,
+): boolean {
+  return Object.keys(value?.cumulativeUsageByModel ?? {}).length > 0;
 }
 
 function emptyUsage(): LLMUsage {

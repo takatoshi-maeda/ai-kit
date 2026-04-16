@@ -74,6 +74,8 @@ describe("runSetupCommand", () => {
     expect(fakeSql.tableRows("versions")).toEqual([
       expect.objectContaining({ version: "20260317000000" }),
       expect.objectContaining({ version: "20260318000000" }),
+      expect.objectContaining({ version: "20260319000000" }),
+      expect.objectContaining({ version: "20260416000000" }),
     ]);
     const result = await stat(path.join(cwd, "runtime-assets"));
     expect(result.isDirectory()).toBe(true);
@@ -235,6 +237,8 @@ describe("runSetupCommand", () => {
     expect(migration).toContain('"linked_versions"');
     expect(migration).toContain("20260317000000");
     expect(migration).toContain("20260318000000");
+    expect(migration).toContain("20260319000000");
+    expect(migration).toContain("20260416000000");
     expect(migration).toContain('"linked_conversations"');
     expect(migration).toContain("'linked-bucket'");
   });

@@ -51,6 +51,7 @@ interface ConversationRunStateRow {
   user_content: RunState["userContent"] | null;
   assistant_message: string | null;
   timeline: RunState["timeline"] | null;
+  metadata: RunState["metadata"] | null;
   agent_id: string | null;
   agent_name: string | null;
   created_at: string;
@@ -521,6 +522,7 @@ export class SupabasePersistence implements AgentPersistence {
         user_content: state.userContent ?? null,
         assistant_message: state.assistantMessage ?? null,
         timeline: state.timeline ?? null,
+        metadata: state.metadata ?? null,
         agent_id: state.agentId ?? null,
         agent_name: state.agentName ?? null,
         created_at: timestamp,
@@ -591,6 +593,7 @@ function toRunState(row?: ConversationRunStateRow): RunState | undefined {
     userContent: row.user_content ?? undefined,
     assistantMessage: row.assistant_message ?? undefined,
     timeline: row.timeline ?? undefined,
+    metadata: row.metadata ?? undefined,
     agentId: row.agent_id ?? undefined,
     agentName: row.agent_name ?? undefined,
   };

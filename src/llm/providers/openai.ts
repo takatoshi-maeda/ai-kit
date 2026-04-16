@@ -24,6 +24,7 @@ import {
   RateLimitError,
   ContextLengthExceededError,
 } from "../../errors.js";
+import { withComputedUsageCost } from "../costs.js";
 
 type ResponseInput = OpenAI.Responses.ResponseCreateParamsNonStreaming["input"];
 type ResponseInputItem = OpenAI.Responses.ResponseInputItem;
@@ -748,7 +749,7 @@ export class OpenAIClient implements LLMClient {
     const cachedInputTokens =
       usage.input_tokens_details?.cached_tokens ?? 0;
 
-    return {
+    return withComputedUsageCost(this.provider, this.model, {
       inputTokens: usage.input_tokens,
       outputTokens: usage.output_tokens,
       cachedInputTokens,
@@ -757,7 +758,7 @@ export class OpenAIClient implements LLMClient {
       outputCost: 0,
       cacheCost: 0,
       totalCost: 0,
-    };
+    });
   }
 
   private mapError(error: unknown): Error {

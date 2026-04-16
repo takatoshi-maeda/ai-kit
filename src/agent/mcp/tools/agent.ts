@@ -11,6 +11,16 @@ import {
 import type { PublicAssetStorage } from "../../public-assets/storage.js";
 import type { LLMStreamEvent } from "../../../types/stream-events.js";
 import type { ContentPart } from "../../../types/llm.js";
+import {
+  appendUsageToSerializedUsageCostSessionState,
+  type SerializedUsageCostSessionState,
+} from "../../../llm/costs.js";
+import type {
+  AgentRuntimePolicy,
+  AgentRuntimeSettings,
+  ResolvedAgentRuntime,
+} from "../../../types/runtime.js";
+import { resolveAgentRuntime } from "../runtime.js";
 
 const ImageSourceSchema = z.union([
   z.object({
@@ -68,6 +78,11 @@ const ContentPartSchema = z.union([
 const ContentPartArraySchema = z.array(ContentPartSchema);
 
 const UserInputSchema = z.union([z.string(), ContentPartArraySchema]);
+const RuntimeSchema = z.object({
+  model: z.string().optional(),
+  reasoningEffort: z.enum(["low", "medium", "high"]).optional(),
+  verbosity: z.enum(["low", "medium", "high"]).optional(),
+});
 
 /** agent.run ツールの入力パラメータ */
 export const AgentRunParamsSchema = z.object({
@@ -81,6 +96,7 @@ export const AgentRunParamsSchema = z.object({
   idempotencyKey: z.string().optional().describe("Idempotency key for deduplication"),
   sessionId: z.string().optional().describe("Session ID for conversation continuity"),
   title: z.string().optional().describe("Title for the conversation"),
+  runtime: RuntimeSchema.optional().describe("Runtime LLM overrides for this run"),
   params: z.record(z.unknown()).optional().describe("Additional parameters for the agent"),
   agentId: z.string().optional().describe("Agent ID to use. Defaults to the default agent"),
   stream: z.boolean().optional().describe("Enable streaming notifications"),
@@ -100,6 +116,7 @@ export interface AgentRunResult {
   agentId?: string;
   idempotencyKey?: string;
   errorMessage?: string;
+  runtime?: ResolvedAgentRuntime;
 }
 
 /** MCP ストリーム通知イベント */
@@ -153,6 +170,7 @@ export interface AgentToolDeps {
 const MAX_BASE64_IMAGE_BYTES_PER_TURN = 2 * 1024 * 1024;
 const MAX_BASE64_FILE_BYTES_PER_TURN = 25 * 1024 * 1024;
 const MAX_TEXT_FILE_BYTES_FOR_INLINE_LLM = 256 * 1024;
+const USAGE_COST_SESSION_METADATA_KEY = "usageCostSession";
 
 const IMAGE_MEDIA_TYPE_TO_EXTENSION: Record<string, string> = {
   "image/png": "png",
@@ -174,6 +192,7 @@ export async function handleAgentList(
     agents: rawPayload.agents.map((agent) => ({
       agentId: agent.agentId,
       description: agent.description ?? null,
+      runtimePolicy: toRuntimePolicyWireValue(agent.runtimePolicy),
     })),
   };
   return {
@@ -197,6 +216,7 @@ export async function handleAgentRun(
     idempotencyKey,
     sessionId: requestedSessionId,
     title,
+    runtime: requestedRuntime,
     params: agentParams,
     agentId: requestedAgentId,
     stream: enableStream,
@@ -263,6 +283,11 @@ export async function handleAgentRun(
   }
 
   // Record run state as started
+  const entry = deps.registry.get(agentId);
+  const resolvedRuntime = resolveAgentRuntime(
+    entry.runtimePolicy,
+    requestedRuntime,
+  );
   const startedAt = new Date().toISOString();
   const runTimeline: TimelineItem[] = [];
   const toolCallState = new Map<string, { index: number; argumentsText: string }>();
@@ -276,6 +301,7 @@ export async function handleAgentRun(
     userMessage: userMessagePreview,
     userContent: userInput,
     agentId,
+    runtime: resolvedRuntime,
   });
 
   // Send start notification
@@ -292,7 +318,6 @@ export async function handleAgentRun(
   await deps.persistence.appendInputMessageHistory(userMessagePreview, sessionId, runId);
 
   // Create agent context and run
-  const entry = deps.registry.get(agentId);
   const existingConversation = await deps.persistence.readConversation(sessionId, agentId);
   const persistedPreviousResponseId = findLatestResponseId(existingConversation?.turns ?? []);
   const history = new InMemoryHistory();
@@ -302,10 +327,15 @@ export async function handleAgentRun(
     auth: deps.authContext,
     selectedAgentName: agentId,
   });
-  const agent = entry.create(context, agentParams);
+  const agent = entry.create(context, agentParams, resolvedRuntime);
   const provider = resolveAgentProvider(agent);
+  const model = resolveAgentModel(agent);
   if (provider !== "openai") {
     await hydrateHistoryFromPersistence(deps.persistence, history, sessionId, agentId);
+  }
+  const persistedUsageCostSession = existingConversation?.inProgress?.metadata?.usageCostSession;
+  if (persistedUsageCostSession) {
+    context.metadata.set(USAGE_COST_SESSION_METADATA_KEY, persistedUsageCostSession);
   }
   if (provider === "openai" && persistedPreviousResponseId) {
     context.metadata.set("previousResponseId", persistedPreviousResponseId);
@@ -320,6 +350,15 @@ export async function handleAgentRun(
       let agentResult: Awaited<typeof agentStream.result>;
       try {
         for await (const event of agentStream) {
+          if (event.type === "response.completed" && provider && model) {
+            const nextUsageCostSession = appendUsageToSerializedUsageCostSessionState(
+              getUsageCostSessionMetadata(context),
+              provider as "openai" | "anthropic" | "google" | "perplexity",
+              model,
+              event.result.usage,
+            );
+            context.metadata.set(USAGE_COST_SESSION_METADATA_KEY, nextUsageCostSession);
+          }
           const timelineChanged = applyStreamEventToTimeline(
             event,
             runTimeline,
@@ -329,7 +368,7 @@ export async function handleAgentRun(
             },
           );
           await forwardStreamEvent(event, deps.sendNotification);
-          if (timelineChanged) {
+          if (timelineChanged || event.type === "response.completed") {
             await deps.persistence.appendRunState(sessionId, {
               runId,
               turnId,
@@ -340,7 +379,11 @@ export async function handleAgentRun(
               userContent: userInput,
               assistantMessage: partialAssistantMessage || undefined,
               timeline: cloneTimeline(runTimeline),
+              metadata: {
+                usageCostSession: getUsageCostSessionMetadata(context),
+              },
               agentId,
+              runtime: resolvedRuntime,
             });
           }
         }
@@ -361,6 +404,7 @@ export async function handleAgentRun(
         message: agentResult.content ?? "",
         agentId,
         idempotencyKey,
+        runtime: resolvedRuntime,
       };
 
       // Record cost
@@ -396,6 +440,7 @@ export async function handleAgentRun(
         message: agentResult.content ?? "",
         agentId,
         idempotencyKey,
+        runtime: resolvedRuntime,
       };
 
       if (agentResult.usage.totalCost > 0) {
@@ -420,6 +465,7 @@ export async function handleAgentRun(
       status: "success",
       timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
       agentId,
+      runtime: resolvedRuntime,
     };
     await deps.persistence.appendConversationTurn(sessionId, turn, title);
 
@@ -437,6 +483,7 @@ export async function handleAgentRun(
       agentId,
       idempotencyKey,
       errorMessage,
+      runtime: resolvedRuntime,
     };
 
     // Persist error turn
@@ -452,6 +499,7 @@ export async function handleAgentRun(
       errorMessage,
       timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
       agentId,
+      runtime: resolvedRuntime,
     };
     await deps.persistence.appendConversationTurn(sessionId, turn, title);
 
@@ -804,6 +852,9 @@ function toAgentRunWireResult(
   );
   const errorMessage = stringOrUndefined(source.errorMessage ?? source.error_message);
   const status = stringOrUndefined(source.status) ?? "error";
+  const runtime = toResolvedRuntimeWireValue(
+    source.runtime as ResolvedAgentRuntime | undefined,
+  );
 
   return {
     sessionId: sessionId ?? null,
@@ -816,6 +867,35 @@ function toAgentRunWireResult(
     idempotencyKey: idempotencyKey ?? null,
     notificationToken: notificationToken ?? null,
     errorMessage: errorMessage ?? null,
+    runtime,
+  };
+}
+
+function toRuntimePolicyWireValue(
+  runtimePolicy: AgentRuntimePolicy | undefined,
+): Record<string, unknown> | null {
+  if (!runtimePolicy) {
+    return null;
+  }
+  return {
+    provider: runtimePolicy.provider,
+    defaults: toResolvedRuntimeWireValue(runtimePolicy.defaults),
+    allowedModels: runtimePolicy.allowedModels ?? null,
+    allowedReasoningEfforts: runtimePolicy.allowedReasoningEfforts ?? null,
+    allowedVerbosity: runtimePolicy.allowedVerbosity ?? null,
+  };
+}
+
+function toResolvedRuntimeWireValue(
+  runtime: ResolvedAgentRuntime | undefined,
+): Record<string, unknown> | null {
+  if (!runtime) {
+    return null;
+  }
+  return {
+    model: runtime.model,
+    reasoningEffort: runtime.reasoningEffort ?? null,
+    verbosity: runtime.verbosity ?? null,
   };
 }
 
@@ -833,6 +913,11 @@ function resolveUserInput(
 function resolveAgentProvider(agent: unknown): string | null {
   const provider = (agent as { options?: { client?: { provider?: string } } })?.options?.client?.provider;
   return typeof provider === "string" ? provider : null;
+}
+
+function resolveAgentModel(agent: unknown): string | null {
+  const model = (agent as { options?: { client?: { model?: string } } })?.options?.client?.model;
+  return typeof model === "string" ? model : null;
 }
 
 function findLatestResponseId(turns: ConversationTurn[]): string | undefined {
@@ -891,6 +976,16 @@ function buildAssistantHistoryContent(turn: ConversationTurn): string {
   }
 
   return parts.join("\n\n").trim();
+}
+
+function getUsageCostSessionMetadata(
+  context: AgentContextImpl,
+): SerializedUsageCostSessionState | undefined {
+  const value = context.metadata.get(USAGE_COST_SESSION_METADATA_KEY);
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return undefined;
+  }
+  return value as SerializedUsageCostSessionState;
 }
 
 function toUserMessagePreview(input: string | ContentPart[]): string {

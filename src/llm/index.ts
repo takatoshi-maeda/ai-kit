@@ -7,6 +7,7 @@ import type { LLMResult } from "../types/llm.js";
 import type { LLMStreamEvent } from "../types/stream-events.js";
 import { startObservation, withObservation } from "../tracing/langfuse.js";
 import type { LLMProvider } from "./client.js";
+import { billUsageForCurrentSession } from "./costs.js";
 
 function buildTracingMetadata(
   provider: LLMProvider,
@@ -59,7 +60,15 @@ function createTracedLLMClient(client: LLMClient): LLMClient {
           metadata: buildTracingMetadata(client.provider, "invoke"),
         },
         async (observation) => {
-          const result = await client.invoke(input);
+          const rawResult = await client.invoke(input);
+          const result = {
+            ...rawResult,
+            usage: billUsageForCurrentSession(
+              client.provider,
+              client.model,
+              rawResult.usage,
+            ),
+          };
           observation.update({
             output: result.content,
             usage: result.usage,
@@ -95,7 +104,19 @@ async function *tracedStream(
   try {
     for await (const event of client.stream(input)) {
       if (event.type === "response.completed") {
-        completedResult = event.result;
+        completedResult = {
+          ...event.result,
+          usage: billUsageForCurrentSession(
+            client.provider,
+            client.model,
+            event.result.usage,
+          ),
+        };
+        yield {
+          ...event,
+          result: completedResult,
+        };
+        continue;
       } else if (event.type === "response.failed" || event.type === "error") {
         streamError = event.error;
       }

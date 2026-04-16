@@ -228,6 +228,7 @@ export function createFakePostgresSql(
           userContent,
           assistantMessage,
           timeline,
+          metadata,
           agentId,
           agentName,
           createdAt,
@@ -246,6 +247,7 @@ export function createFakePostgresSql(
             user_content: userContent,
             assistant_message: assistantMessage,
             timeline,
+            metadata,
             agent_id: agentId,
             agent_name: agentName,
           });
@@ -262,6 +264,7 @@ export function createFakePostgresSql(
           user_content: userContent,
           assistant_message: assistantMessage,
           timeline,
+          metadata,
           agent_id: agentId,
           agent_name: agentName,
           created_at: createdAt,

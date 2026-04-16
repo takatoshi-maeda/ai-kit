@@ -4,6 +4,38 @@ export const builtInModels: ModelInfo[] = [
   // ── OpenAI ──────────────────────────────────────────────
   {
     provider: "openai",
+    modelId: "gpt-5.2",
+    displayName: "GPT-5.2",
+    contextWindowSize: 400_000,
+    inputCostPer1MTokens: 1.75,
+    outputCostPer1MTokens: 14,
+    cacheReadCostPer1MTokens: 0.175,
+    capabilities: {
+      supportsReasoning: true,
+      supportsToolCalls: true,
+      supportsStreaming: true,
+      supportsImages: true,
+      contextWindowSize: 400_000,
+    },
+  },
+  {
+    provider: "openai",
+    modelId: "gpt-5.4",
+    displayName: "GPT-5.4",
+    contextWindowSize: 1_050_000,
+    inputCostPer1MTokens: 2.5,
+    outputCostPer1MTokens: 15,
+    cacheReadCostPer1MTokens: 0.25,
+    capabilities: {
+      supportsReasoning: true,
+      supportsToolCalls: true,
+      supportsStreaming: true,
+      supportsImages: true,
+      contextWindowSize: 1_050_000,
+    },
+  },
+  {
+    provider: "openai",
     modelId: "gpt-4o",
     displayName: "GPT-4o",
     contextWindowSize: 128_000,

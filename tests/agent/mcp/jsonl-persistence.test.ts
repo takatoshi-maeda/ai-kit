@@ -69,6 +69,22 @@ describe("JsonlMcpPersistence", () => {
         updatedAt: new Date().toISOString(),
         userMessage: "Working...",
         userContent: [...userContent],
+        metadata: {
+          usageCostSession: {
+            cumulativeUsageByModel: {
+              "openai:gpt-5.4": {
+                inputTokens: 10,
+                outputTokens: 5,
+                cachedInputTokens: 0,
+                totalTokens: 15,
+                inputCost: 0.1,
+                outputCost: 0.2,
+                cacheCost: 0,
+                totalCost: 0.3,
+              },
+            },
+          },
+        },
         agentId: "front-desk",
       });
 
@@ -77,6 +93,14 @@ describe("JsonlMcpPersistence", () => {
       expect(conversation!.inProgress).toBeDefined();
       expect(conversation!.inProgress!.runId).toBe("run-1");
       expect(conversation!.inProgress!.userContent).toEqual(userContent);
+      expect(conversation!.inProgress!.metadata?.usageCostSession).toMatchObject({
+        cumulativeUsageByModel: {
+          "openai:gpt-5.4": {
+            totalTokens: 15,
+            totalCost: 0.3,
+          },
+        },
+      });
       expect(conversation!.agentId).toBe("front-desk");
     });
 

@@ -19,6 +19,7 @@ import {
   ContextLengthExceededError,
 } from "../../errors.js";
 import type { ToolDefinition } from "../../types/tool.js";
+import { withComputedUsageCost } from "../costs.js";
 
 export class AnthropicClient implements LLMClient {
   readonly provider = "anthropic" as const;
@@ -457,7 +458,7 @@ export class AnthropicClient implements LLMClient {
 
   private mapUsage(usage: Anthropic.Usage): LLMUsage {
     const cachedInputTokens = usage.cache_read_input_tokens ?? 0;
-    return {
+    return withComputedUsageCost(this.provider, this.model, {
       inputTokens: usage.input_tokens,
       outputTokens: usage.output_tokens,
       cachedInputTokens,
@@ -466,7 +467,7 @@ export class AnthropicClient implements LLMClient {
       outputCost: 0,
       cacheCost: 0,
       totalCost: 0,
-    };
+    });
   }
 
   private mapError(error: unknown): Error {
