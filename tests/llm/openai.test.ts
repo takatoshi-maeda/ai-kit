@@ -112,6 +112,11 @@ describe("OpenAIClient", () => {
         id: "resp-2",
         output: [
           {
+            type: "reasoning",
+            id: "rs-1",
+            summary: [],
+          },
+          {
             type: "function_call",
             call_id: "fc-1",
             name: "search",
@@ -137,6 +142,15 @@ describe("OpenAIClient", () => {
       expect(result.toolCalls[0].id).toBe("fc-1");
       expect(result.toolCalls[0].name).toBe("search");
       expect(result.toolCalls[0].arguments).toEqual({ query: "test" });
+      expect(result.toolCalls[0].extra).toMatchObject({
+        providerRaw: {
+          provider: "openai",
+          outputItems: [
+            { type: "reasoning", id: "rs-1" },
+            { type: "function_call", call_id: "fc-1" },
+          ],
+        },
+      });
     });
 
     it("passes instructions to params", async () => {
@@ -320,6 +334,48 @@ describe("OpenAIClient", () => {
       const callArgs = mockCreate.mock.calls[0][0];
       expect(callArgs.input).toEqual([
         { type: "shell_call", call_id: "shell-1", action: { commands: ["pwd"] } },
+        { type: "shell_call_output", call_id: "shell-1", output: [] },
+      ]);
+    });
+
+    it("only forwards output items from providerRaw when previous_response_id is set", async () => {
+      mockCreate.mockResolvedValue({
+        id: "resp-provider-raw-followup",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "ok" }],
+          },
+        ],
+        status: "completed",
+      });
+
+      const client = makeClient();
+      await client.invoke({
+        previousResponseId: "resp-prev-1",
+        messages: [
+          {
+            role: "tool",
+            content: "native output",
+            toolCallId: "shell-1",
+            name: "shell",
+            extra: {
+              providerRaw: {
+                provider: "openai",
+                inputItems: [
+                  { type: "reasoning", id: "rs-1", summary: [] },
+                  { type: "shell_call", call_id: "shell-1", action: { commands: ["pwd"] } },
+                  { type: "shell_call_output", call_id: "shell-1", output: [] },
+                ],
+              },
+            },
+          },
+        ],
+      });
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.previous_response_id).toBe("resp-prev-1");
+      expect(callArgs.input).toEqual([
         { type: "shell_call_output", call_id: "shell-1", output: [] },
       ]);
     });
@@ -557,6 +613,31 @@ describe("OpenAIClient", () => {
       expect(callArgs.reasoning).toEqual({
         effort: "high",
         summary: "concise",
+      });
+    });
+
+    it("passes text verbosity for text responses", async () => {
+      mockCreate.mockResolvedValue({
+        id: "resp-verbosity",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "ok" }],
+          },
+        ],
+        status: "completed",
+      });
+
+      const client = makeClient({
+        model: "gpt-5.4",
+        verbosity: "low",
+      });
+      await client.invoke(makeBasicInput());
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.text).toEqual({
+        format: { type: "text" },
+        verbosity: "low",
       });
     });
   });

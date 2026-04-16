@@ -264,7 +264,9 @@ export class OpenAIClient implements LLMClient {
   private buildParams(
     input: LLMChatInput,
   ): OpenAI.Responses.ResponseCreateParamsNonStreaming {
-    const inputItems = this.convertMessages(input.messages);
+    const inputItems = this.convertMessages(input.messages, {
+      hasPreviousResponseId: typeof input.previousResponseId === "string" && input.previousResponseId.length > 0,
+    });
     const tools = input.tools?.map((t) => this.convertTool(t));
 
     const params: OpenAI.Responses.ResponseCreateParamsNonStreaming = {
@@ -310,6 +312,11 @@ export class OpenAIClient implements LLMClient {
 
     if (input.responseFormat) {
       params.text = this.convertResponseFormat(input.responseFormat);
+    } else if (this.options.verbosity) {
+      params.text = ({
+        format: { type: "text" },
+        verbosity: this.options.verbosity,
+      } as unknown) as OpenAI.Responses.ResponseTextConfig;
     }
 
     if (input.previousResponseId) {
@@ -319,14 +326,20 @@ export class OpenAIClient implements LLMClient {
     return params;
   }
 
-  private convertMessages(messages: LLMMessage[]): ResponseInput {
+  private convertMessages(
+    messages: LLMMessage[],
+    options?: { hasPreviousResponseId?: boolean },
+  ): ResponseInput {
     const items: ResponseInputItem[] = [];
 
     for (let i = 0; i < messages.length; i++) {
       const msg = messages[i];
 
       if (msg.role === "tool") {
-        const providerRawItems = this.getProviderRawInputItems(msg);
+        const providerRawItems = this.getProviderRawInputItems(
+          msg,
+          options?.hasPreviousResponseId ?? false,
+        );
         if (providerRawItems.length > 0) {
           items.push(...providerRawItems);
           continue;
@@ -407,12 +420,24 @@ export class OpenAIClient implements LLMClient {
     return items;
   }
 
-  private getProviderRawInputItems(message: LLMMessage): ResponseInputItem[] {
+  private getProviderRawInputItems(
+    message: LLMMessage,
+    hasPreviousResponseId: boolean,
+  ): ResponseInputItem[] {
     const inputItems = message.extra?.providerRaw?.inputItems;
     if (message.extra?.providerRaw?.provider !== "openai" || !Array.isArray(inputItems)) {
       return [];
     }
-    return inputItems as ResponseInputItem[];
+    const normalizedInputItems = inputItems as ResponseInputItem[];
+    if (!hasPreviousResponseId) {
+      return normalizedInputItems;
+    }
+    return normalizedInputItems.filter((item) => this.isResponseInputOutputItem(item));
+  }
+
+  private isResponseInputOutputItem(item: ResponseInputItem): boolean {
+    const itemType = (item as { type?: unknown }).type;
+    return typeof itemType === "string" && itemType.endsWith("_output");
   }
 
   private convertContentParts(
@@ -483,6 +508,7 @@ export class OpenAIClient implements LLMClient {
   private mapResponse(response: OpenAI.Responses.Response): LLMResult {
     const toolCalls: LLMToolCall[] = [];
     let textContent = "";
+    let pendingReasoningItems: OpenAI.Responses.ResponseOutputItem[] = [];
 
     for (const item of response.output) {
       const itemType = (item as { type: string }).type;
@@ -493,12 +519,22 @@ export class OpenAIClient implements LLMClient {
             textContent += sanitizeVisibleAssistantText(part.text);
           }
         }
+      } else if (this.isReasoningOutputItem(item)) {
+        pendingReasoningItems.push(item);
       } else if (itemType === "function_call") {
-        toolCalls.push(this.mapFunctionToolCall(item as OpenAI.Responses.ResponseFunctionToolCall));
+        toolCalls.push(this.mapFunctionToolCall(
+          item as OpenAI.Responses.ResponseFunctionToolCall,
+          pendingReasoningItems,
+        ));
+        pendingReasoningItems = [];
       } else if (itemType === "shell_call" || itemType === "local_shell_call") {
-        toolCalls.push(this.mapShellToolCall(item));
+        toolCalls.push(this.mapShellToolCall(item, pendingReasoningItems));
+        pendingReasoningItems = [];
       } else if (itemType === "apply_patch_call") {
-        toolCalls.push(this.mapApplyPatchToolCall(item));
+        toolCalls.push(this.mapApplyPatchToolCall(item, pendingReasoningItems));
+        pendingReasoningItems = [];
+      } else {
+        pendingReasoningItems = [];
       }
     }
 
@@ -539,6 +575,7 @@ export class OpenAIClient implements LLMClient {
 
   private mapFunctionToolCall(
     item: OpenAI.Responses.ResponseFunctionToolCall,
+    reasoningItems: OpenAI.Responses.ResponseOutputItem[] = [],
   ): LLMToolCall {
     let args: Record<string, unknown> = {};
     try {
@@ -555,13 +592,16 @@ export class OpenAIClient implements LLMClient {
       extra: {
         providerRaw: {
           provider: "openai",
-          outputItems: [item],
+          outputItems: [...reasoningItems, item],
         },
       },
     };
   }
 
-  private mapShellToolCall(item: OpenAI.Responses.ResponseOutputItem): LLMToolCall {
+  private mapShellToolCall(
+    item: OpenAI.Responses.ResponseOutputItem,
+    reasoningItems: OpenAI.Responses.ResponseOutputItem[] = [],
+  ): LLMToolCall {
     const shellItem = item as OpenAI.Responses.ResponseOutputItem & {
       call_id?: string;
       id?: string;
@@ -576,7 +616,7 @@ export class OpenAIClient implements LLMClient {
       extra: {
         providerRaw: {
           provider: "openai",
-          outputItems: [item],
+          outputItems: [...reasoningItems, item],
         },
       },
     };
@@ -584,6 +624,7 @@ export class OpenAIClient implements LLMClient {
 
   private mapApplyPatchToolCall(
     item: OpenAI.Responses.ResponseOutputItem,
+    reasoningItems: OpenAI.Responses.ResponseOutputItem[] = [],
   ): LLMToolCall {
     const patchItem = item as OpenAI.Responses.ResponseOutputItem & {
       call_id?: string;
@@ -615,10 +656,14 @@ export class OpenAIClient implements LLMClient {
       extra: {
         providerRaw: {
           provider: "openai",
-          outputItems: [item],
+          outputItems: [...reasoningItems, item],
         },
       },
     };
+  }
+
+  private isReasoningOutputItem(item: OpenAI.Responses.ResponseOutputItem): boolean {
+    return (item as { type?: unknown }).type === "reasoning";
   }
 
   private parseApplyPatchOperation(value: unknown): Record<string, unknown> {

@@ -73,13 +73,14 @@ function makeResult(opts: {
   content?: string | null;
   toolCalls?: LLMResult["toolCalls"];
   finishReason?: LLMResult["finishReason"];
+  responseId?: string;
 }): LLMResult {
   return {
     type: opts.toolCalls?.length ? "tool_use" : "message",
     content: opts.content ?? null,
     toolCalls: opts.toolCalls ?? [],
     usage: emptyUsage(),
-    responseId: "resp-1",
+    responseId: opts.responseId ?? "resp-1",
     finishReason: opts.finishReason ?? (opts.toolCalls?.length ? "tool_use" : "stop"),
   };
 }
@@ -221,6 +222,70 @@ describe("ConversationalAgent", () => {
           ],
         },
       });
+    });
+
+    it("uses the latest OpenAI response id and only sends incremental tool messages on follow-up turns", async () => {
+      const echoTool = defineTool({
+        name: "echo",
+        description: "Echo input",
+        parameters: z.object({ text: z.string() }),
+        execute: async ({ text }) => `echoed: ${text}`,
+      });
+
+      const capturedInputs: LLMChatInput[] = [];
+      const toolCallResult = makeResult({
+        responseId: "resp-tool-turn",
+        toolCalls: [
+          {
+            id: "tc-1",
+            name: "echo",
+            arguments: { text: "hello" },
+            provider: "openai",
+          },
+        ],
+      });
+      const finalResult = makeResult({
+        responseId: "resp-final-turn",
+        content: "Got echo result",
+      });
+      const client: LLMClient = {
+        model: "test-model",
+        provider: "openai",
+        capabilities: defaultCapabilities,
+        async invoke() {
+          throw new Error("invoke should not be called");
+        },
+        async *stream(input: LLMChatInput) {
+          capturedInputs.push(input);
+          const result = capturedInputs.length === 1 ? toolCallResult : finalResult;
+          for (const event of makeStreamEvents(result)) {
+            yield event;
+          }
+        },
+        estimateTokens() {
+          return 10;
+        },
+      };
+      const context = new AgentContextImpl({ history: stubHistory() });
+
+      const agent = new ConversationalAgent({
+        context,
+        client,
+        instructions: "Use tools.",
+        tools: [echoTool],
+      });
+
+      const agentResult = await agent.invoke("Echo something");
+
+      expect(agentResult.content).toBe("Got echo result");
+      expect(capturedInputs[0]?.previousResponseId).toBeUndefined();
+      expect(capturedInputs[1]?.previousResponseId).toBe("resp-tool-turn");
+      expect(capturedInputs[1]?.messages).toEqual([
+        expect.objectContaining({ role: "assistant" }),
+        expect.objectContaining({ role: "tool", toolCallId: "tc-1" }),
+      ]);
+      expect(capturedInputs[1]?.messages.some((message) => message.role === "user")).toBe(false);
+      expect(context.metadata.get("previousResponseId")).toBe("resp-final-turn");
     });
 
     it("routes provider-native tool calls through the native runtime", async () => {

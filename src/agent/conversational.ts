@@ -213,16 +213,21 @@ export class ConversationalAgent {
     ];
     let onBeforeCompleteConsumed = false;
 
-    const currentMessages: LLMMessage[] = [
+    const conversationMessages: LLMMessage[] = [
       { role: "user", content: input },
     ];
+    let pendingMessages: LLMMessage[] = [...conversationMessages];
 
     const totalUsage = emptyUsage();
     let currentTurn = 0;
 
     while (currentTurn < maxTurns) {
       // 1. Execute enforced tools from queue
-      await this.executeEnforcedTools(enforcedQueue, currentMessages);
+      await this.executeEnforcedTools(
+        enforcedQueue,
+        pendingMessages,
+        conversationMessages,
+      );
 
       // 2. Build chat input
       const historyMessages = await context.history.toLLMMessages();
@@ -231,7 +236,7 @@ export class ConversationalAgent {
         : instructions;
 
       const chatInput = this.buildChatInput(
-        [...historyMessages, ...currentMessages],
+        [...historyMessages, ...pendingMessages],
         combinedInstructions,
       );
 
@@ -248,6 +253,9 @@ export class ConversationalAgent {
       );
 
       addUsage(totalUsage, turnLLMResult.usage);
+      if (turnLLMResult.responseId) {
+        context.metadata.set("previousResponseId", turnLLMResult.responseId);
+      }
 
       // Record turn
       const turn: TurnResult = {
@@ -288,7 +296,13 @@ export class ConversationalAgent {
           turnLLMResult.toolCalls,
           turnLLMResult.content ?? undefined,
         );
-        currentMessages.push(...toolMessages);
+        conversationMessages.push(...toolMessages);
+
+        if (client.provider === "openai" && turnLLMResult.responseId) {
+          pendingMessages = toolMessages;
+        } else {
+          pendingMessages.push(...toolMessages);
+        }
 
         currentTurn++;
         continue;
@@ -323,7 +337,7 @@ export class ConversationalAgent {
 
       // Save to conversation history
       await context.history.addMessage({ role: "user", content: input });
-      for (const message of currentMessages.slice(1)) {
+      for (const message of conversationMessages.slice(1)) {
         await context.history.addMessage({
           role: message.role,
           content: message.content,
@@ -473,7 +487,8 @@ export class ConversationalAgent {
 
   private async executeEnforcedTools(
     queue: ToolDefinition[],
-    messages: LLMMessage[],
+    pendingMessages: LLMMessage[],
+    conversationMessages: LLMMessage[] = pendingMessages,
   ): Promise<void> {
     while (queue.length > 0) {
       const tool = queue.shift()!;
@@ -482,10 +497,14 @@ export class ConversationalAgent {
         const rawResult = await tool.execute(parsed);
         const content =
           typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
-        messages.push({
+        const message: LLMMessage = {
           role: "user",
           content: `[${tool.name}]: ${content}`,
-        });
+        };
+        pendingMessages.push(message);
+        if (conversationMessages !== pendingMessages) {
+          conversationMessages.push(message);
+        }
       } catch {
         // Skip enforced tools that fail to parse/execute
       }
