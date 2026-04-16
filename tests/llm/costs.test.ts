@@ -49,6 +49,34 @@ describe("withComputedUsageCost", () => {
     expect(usage.totalCost).toBeCloseTo(2.018);
   });
 
+  it("computes GPT-5.4 mini cost using the current mini pricing", () => {
+    const usage = withComputedUsageCost("openai", "gpt-5.4-mini", makeUsage({
+      inputTokens: 1_000_000,
+      cachedInputTokens: 200_000,
+      outputTokens: 100_000,
+      totalTokens: 1_100_000,
+    }));
+
+    expect(usage.inputCost).toBeCloseTo(0.6);
+    expect(usage.cacheCost).toBeCloseTo(0.015);
+    expect(usage.outputCost).toBeCloseTo(0.45);
+    expect(usage.totalCost).toBeCloseTo(1.065);
+  });
+
+  it("computes GPT-5.4 nano cost using the current nano pricing", () => {
+    const usage = withComputedUsageCost("openai", "gpt-5.4-nano", makeUsage({
+      inputTokens: 1_000_000,
+      cachedInputTokens: 250_000,
+      outputTokens: 400_000,
+      totalTokens: 1_400_000,
+    }));
+
+    expect(usage.inputCost).toBeCloseTo(0.15);
+    expect(usage.cacheCost).toBeCloseTo(0.005);
+    expect(usage.outputCost).toBeCloseTo(0.5);
+    expect(usage.totalCost).toBeCloseTo(0.655);
+  });
+
   it("applies the long-context uplift to GPT-5.4 snapshots too", () => {
     const usage = withComputedUsageCost("openai", "gpt-5.4-2026-03-05", makeUsage({
       inputTokens: 300_000,
