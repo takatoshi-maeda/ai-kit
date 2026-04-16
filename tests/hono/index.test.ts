@@ -221,7 +221,7 @@ describe("mountMcpRoutes", () => {
     expect(response.headers.get("content-type")).toBe("image/png");
   });
 
-  it("lists apps while keeping the legacy agents payload", async () => {
+  it("lists apps with nested agents", async () => {
     const app = new Hono();
     await mountMcpRoutes(app, {
       agentGroups: [
@@ -234,6 +234,11 @@ describe("mountMcpRoutes", () => {
               agentId: "writer",
               create: () => null as never,
             },
+            {
+              agentId: "reviewer",
+              description: "Reviewer agent",
+              create: () => null as never,
+            },
           ],
         },
       ],
@@ -242,7 +247,6 @@ describe("mountMcpRoutes", () => {
     const response = await app.request("/api/mcp");
     const payload = await response.json() as {
       apps: unknown;
-      agents: unknown;
     };
 
     expect(payload.apps).toEqual([
@@ -250,12 +254,24 @@ describe("mountMcpRoutes", () => {
         appName: "workspace",
         name: "workspace",
         description: "Workspace MCP app",
-      },
-    ]);
-    expect(payload.agents).toEqual([
-      {
-        name: "workspace",
-        description: "Workspace MCP app",
+        defaultAgentId: "writer",
+        mcpPath: "/api/mcp/workspace",
+        agentListPath: "/api/mcp/workspace/tools/call/agent.list",
+        agentRunPath: "/api/mcp/workspace/tools/call/agent.run",
+        agents: [
+          {
+            agentId: "writer",
+            description: null,
+            isDefault: true,
+            agentRunPath: "/api/mcp/workspace/tools/call/agent.run",
+          },
+          {
+            agentId: "reviewer",
+            description: "Reviewer agent",
+            isDefault: false,
+            agentRunPath: "/api/mcp/workspace/tools/call/agent.run",
+          },
+        ],
       },
     ]);
   });

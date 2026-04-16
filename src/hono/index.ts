@@ -413,10 +413,19 @@ export async function mountMcpRoutes(
       appName: definition.appName,
       name: definition.appName,
       description: definition.description,
+      defaultAgentId: definition.defaultAgentId ?? null,
+      mcpPath: `${basePath}/${encodeURIComponent(definition.appName)}`,
+      agentListPath: `${basePath}/${encodeURIComponent(definition.appName)}/tools/call/agent.list`,
+      agentRunPath: `${basePath}/${encodeURIComponent(definition.appName)}/tools/call/agent.run`,
+      agents: definition.agents.map((agent) => ({
+        agentId: agent.agentId,
+        description: agent.description ?? null,
+        isDefault: agent.agentId === (definition.defaultAgentId ?? null),
+        agentRunPath: `${basePath}/${encodeURIComponent(definition.appName)}/tools/call/agent.run`,
+      })),
     }));
     return c.json({
       apps,
-      agents: apps.map(({ name, description }) => ({ name, description })),
     });
   });
 
