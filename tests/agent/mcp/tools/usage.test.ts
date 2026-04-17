@@ -27,6 +27,24 @@ describe("usage tools", () => {
     const persistence = stubPersistence(async () => ({
       period: "all",
       cost: { totalUsd: 1.23, totalByCurrency: { usd: 1.23 } },
+      periods: {
+        cumulative: {
+          period: "all",
+          cost: { totalUsd: 1.23, totalByCurrency: { usd: 1.23 } },
+        },
+        monthly: {
+          period: "2026-04",
+          cost: { totalUsd: 1, totalByCurrency: { usd: 1 } },
+        },
+        weekly: {
+          period: "2026-W16",
+          cost: { totalUsd: 0.8, totalByCurrency: { usd: 0.8 } },
+        },
+        daily: {
+          period: "2026-04-17",
+          cost: { totalUsd: 0.2, totalByCurrency: { usd: 0.2 } },
+        },
+      },
     }));
 
     const result = await handleUsageSummary(persistence, {});
@@ -35,6 +53,9 @@ describe("usage tools", () => {
     expect(parsed.period).toBe("all");
     expect(parsed.cost.totalUsd).toBe(1.23);
     expect(parsed.cost.totalByCurrency).toEqual({ usd: 1.23 });
+    expect(parsed.periods.monthly.period).toBe("2026-04");
+    expect(parsed.periods.weekly.period).toBe("2026-W16");
+    expect(parsed.periods.daily.period).toBe("2026-04-17");
     expect(parsed.tokens).toBeNull();
     expect(parsed.requests).toBeNull();
     expect(result.structuredContent).toEqual(parsed);
@@ -50,6 +71,7 @@ describe("usage tools", () => {
     expect(parsed.period).toBe("2026-02");
     expect(parsed.cost.totalUsd).toBe(0);
     expect(parsed.cost.totalByCurrency).toEqual({});
+    expect(parsed.periods.cumulative.cost.totalUsd).toBe(0);
     expect(result.isError).toBe(false);
   });
 });

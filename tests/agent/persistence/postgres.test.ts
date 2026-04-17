@@ -60,6 +60,36 @@ describe("PostgresPersistence", () => {
         totalUsd: 0,
         totalByCurrency: {},
       },
+      periods: {
+        cumulative: {
+          period: "all",
+          cost: {
+            totalUsd: 0.1,
+            totalByCurrency: { usd: 0.1 },
+          },
+        },
+        monthly: {
+          period: expect.any(String),
+          cost: {
+            totalUsd: 0.1,
+            totalByCurrency: { usd: 0.1 },
+          },
+        },
+        weekly: {
+          period: expect.any(String),
+          cost: {
+            totalUsd: 0.1,
+            totalByCurrency: { usd: 0.1 },
+          },
+        },
+        daily: {
+          period: expect.any(String),
+          cost: {
+            totalUsd: 0.1,
+            totalByCurrency: { usd: 0.1 },
+          },
+        },
+      },
     });
   });
 
@@ -97,6 +127,36 @@ describe("PostgresPersistence", () => {
         cost: {
           totalUsd: 0.1,
           totalByCurrency: { usd: 0.1 },
+        },
+        periods: {
+          cumulative: {
+            period: "all",
+            cost: {
+              totalUsd: 0.1,
+              totalByCurrency: { usd: 0.1 },
+            },
+          },
+          monthly: {
+            period: "2026-03",
+            cost: {
+              totalUsd: 0.1,
+              totalByCurrency: { usd: 0.1 },
+            },
+          },
+          weekly: {
+            period: "2026-W12",
+            cost: {
+              totalUsd: 0.1,
+              totalByCurrency: { usd: 0.1 },
+            },
+          },
+          daily: {
+            period: "2026-03-17",
+            cost: {
+              totalUsd: 0.1,
+              totalByCurrency: { usd: 0.1 },
+            },
+          },
         },
       });
     } finally {

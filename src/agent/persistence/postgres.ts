@@ -18,6 +18,7 @@ import {
   formatPostgresError,
   type PostgresSqlLike,
 } from "../postgres/client.js";
+import { buildUsageSummary } from "./usage-summary.js";
 
 interface ConversationRow extends Record<string, unknown> {
   id: number;
@@ -363,25 +364,11 @@ export class PostgresPersistence implements AgentPersistence {
     if (rows.length === 0) {
       return null;
     }
-
-    const filtered = period
-      ? rows.filter((entry) => normalizeTimestamp(entry.created_at).startsWith(period))
-      : rows;
-
-    const totalByCurrency: Record<string, number> = {};
-    let totalUsd = 0;
-    for (const entry of filtered) {
-      totalByCurrency[entry.currency] =
-        (totalByCurrency[entry.currency] ?? 0) + Number(entry.amount);
-      if (entry.currency === "usd") {
-        totalUsd += Number(entry.amount);
-      }
-    }
-
-    return {
-      period: period ?? "all",
-      cost: { totalUsd, totalByCurrency },
-    };
+    return buildUsageSummary(rows.map((entry) => ({
+      amount: Number(entry.amount),
+      currency: entry.currency,
+      timestamp: normalizeTimestamp(entry.created_at),
+    })), period);
   }
 
   async readIdempotencyRecord(

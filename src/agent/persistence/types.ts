@@ -112,9 +112,25 @@ export interface ConversationSummary {
 }
 
 /** 使用量サマリー */
+export interface McpUsageCostSummary {
+  totalUsd: number;
+  totalByCurrency: Record<string, number>;
+}
+
+export interface McpUsagePeriodSummary {
+  period: string;
+  cost: McpUsageCostSummary;
+}
+
 export interface McpUsageSummary {
   period: string;
-  cost: { totalUsd: number; totalByCurrency: Record<string, number> };
+  cost: McpUsageCostSummary;
+  periods: {
+    cumulative: McpUsagePeriodSummary;
+    monthly: McpUsagePeriodSummary;
+    weekly: McpUsagePeriodSummary;
+    daily: McpUsagePeriodSummary;
+  };
 }
 
 /** 冪等性レコード */

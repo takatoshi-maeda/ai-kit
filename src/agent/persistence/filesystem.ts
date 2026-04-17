@@ -15,6 +15,7 @@ import type {
   McpUsageSummary,
   RunState,
 } from "./types.js";
+import { buildUsageSummary } from "./usage-summary.js";
 
 const CONVERSATIONS_DIR = "conversations";
 const RUN_STATES_DIR = "run-states";
@@ -255,27 +256,11 @@ export class FilesystemPersistence implements AgentPersistence {
     if (!raw) return null;
 
     const entries = parseJsonl<UsageEntry>(raw);
-    if (entries.length === 0) return null;
-
-    const filtered = period
-      ? entries.filter((e) => e.timestamp.startsWith(period))
-      : entries;
-
-    const totalByCurrency: Record<string, number> = {};
-    let totalUsd = 0;
-
-    for (const entry of filtered) {
-      totalByCurrency[entry.currency] =
-        (totalByCurrency[entry.currency] ?? 0) + entry.amount;
-      if (entry.currency === "usd") {
-        totalUsd += entry.amount;
-      }
-    }
-
-    return {
-      period: period ?? "all",
-      cost: { totalUsd, totalByCurrency },
-    };
+    return buildUsageSummary(entries.map((entry) => ({
+      amount: entry.amount,
+      currency: entry.currency,
+      timestamp: entry.timestamp,
+    })), period);
   }
 
   async readIdempotencyRecord(

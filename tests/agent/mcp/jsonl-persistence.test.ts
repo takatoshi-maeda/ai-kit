@@ -226,13 +226,23 @@ describe("JsonlMcpPersistence", () => {
 
   describe("usage", () => {
     it("appends and summarizes usage", async () => {
-      await persistence.appendUsage(0.05, "usd", "sess-1", "run-1");
-      await persistence.appendUsage(0.03, "usd", "sess-1", "run-2");
+      vi.useFakeTimers();
+      try {
+        vi.setSystemTime(new Date("2026-04-17T12:00:00.000Z"));
+        await persistence.appendUsage(0.05, "usd", "sess-1", "run-1");
+        await persistence.appendUsage(0.03, "usd", "sess-1", "run-2");
 
-      const summary = await persistence.summarizeUsage();
-      expect(summary).not.toBeNull();
-      expect(summary!.cost.totalUsd).toBeCloseTo(0.08);
-      expect(summary!.cost.totalByCurrency["usd"]).toBeCloseTo(0.08);
+        const summary = await persistence.summarizeUsage();
+        expect(summary).not.toBeNull();
+        expect(summary!.cost.totalUsd).toBeCloseTo(0.08);
+        expect(summary!.cost.totalByCurrency["usd"]).toBeCloseTo(0.08);
+        expect(summary!.periods.cumulative.cost.totalUsd).toBeCloseTo(0.08);
+        expect(summary!.periods.monthly.period).toBe("2026-04");
+        expect(summary!.periods.weekly.period).toBe("2026-W16");
+        expect(summary!.periods.daily.period).toBe("2026-04-17");
+      } finally {
+        vi.useRealTimers();
+      }
     });
 
     it("filters by period", async () => {
@@ -270,6 +280,36 @@ describe("JsonlMcpPersistence", () => {
         cost: {
           totalUsd: 0,
           totalByCurrency: {},
+        },
+        periods: {
+          cumulative: {
+            period: "all",
+            cost: {
+              totalUsd: 0.1,
+              totalByCurrency: { usd: 0.1 },
+            },
+          },
+          monthly: {
+            period: expect.any(String),
+            cost: {
+              totalUsd: 0,
+              totalByCurrency: {},
+            },
+          },
+          weekly: {
+            period: expect.any(String),
+            cost: {
+              totalUsd: 0,
+              totalByCurrency: {},
+            },
+          },
+          daily: {
+            period: expect.any(String),
+            cost: {
+              totalUsd: 0,
+              totalByCurrency: {},
+            },
+          },
         },
       });
     });

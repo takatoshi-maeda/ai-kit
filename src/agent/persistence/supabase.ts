@@ -18,6 +18,7 @@ import {
   formatSupabaseError,
   type SupabaseClientLike,
 } from "../supabase/client.js";
+import { buildUsageSummary } from "./usage-summary.js";
 
 interface ConversationRow {
   id?: number;
@@ -362,25 +363,11 @@ export class SupabasePersistence implements AgentPersistence {
     if (entries.length === 0) {
       return null;
     }
-
-    const filtered = period
-      ? entries.filter((entry) => entry.created_at.startsWith(period))
-      : entries;
-
-    const totalByCurrency: Record<string, number> = {};
-    let totalUsd = 0;
-    for (const entry of filtered) {
-      totalByCurrency[entry.currency] =
-        (totalByCurrency[entry.currency] ?? 0) + Number(entry.amount);
-      if (entry.currency === "usd") {
-        totalUsd += Number(entry.amount);
-      }
-    }
-
-    return {
-      period: period ?? "all",
-      cost: { totalUsd, totalByCurrency },
-    };
+    return buildUsageSummary(entries.map((entry) => ({
+      amount: Number(entry.amount),
+      currency: entry.currency,
+      timestamp: entry.created_at,
+    })), period);
   }
 
   async readIdempotencyRecord(
