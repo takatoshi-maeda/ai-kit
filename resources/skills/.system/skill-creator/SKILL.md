@@ -7,8 +7,6 @@ description: Guide for creating or updating a skill. Use when the user wants to 
 
 Create skills as a single file at `.skills/<skill-name>/SKILL.md`.
 
-Do not create `agents/openai.yaml`, `scripts/`, `references/`, `assets/`, or other auxiliary files unless the user explicitly asks for them.
-
 ## Skill Format
 
 Every skill should contain:
@@ -20,6 +18,12 @@ description: Explain what the skill does and when to use it.
 ---
 
 # Skill Title
+
+## Goal
+
+[Goal for the agent]
+
+## Instructions
 
 [Instructions for the agent]
 ```
