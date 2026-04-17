@@ -1,20 +1,35 @@
 /** エージェントストリーミング出力の構造化レスポンス型 */
 export type AgentStreamResponse =
+  | AgentPartAdded
   | AgentTextDelta
   | AgentToolCall
   | AgentReasoningDelta
   | AgentOutputItemAdded
   | AgentArtifactDelta
   | AgentOutputItemDone
+  | AgentPartDone
   | AgentProgress
   | AgentResultEvent
   | AgentError
   | AgentRunStart
   | AgentRunStop;
 
+export interface AgentPartAdded {
+  type: "agent.part_added";
+  part: { type: "text" };
+}
+
 export interface AgentTextDelta {
   type: "agent.text_delta";
   delta: string;
+}
+
+export interface AgentPartDone {
+  type: "agent.part_done";
+  part: {
+    type: "text";
+    text: string;
+  };
 }
 
 export interface AgentToolCall {

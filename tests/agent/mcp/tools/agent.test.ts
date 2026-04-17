@@ -1069,6 +1069,119 @@ describe("agent tools", () => {
       );
     });
 
+    it("streams text part boundaries around each contiguous text segment", async () => {
+      const notifications: Array<{ method: string; params: Record<string, unknown> }> = [];
+      function segmentedStreamingAgent(ctx: AgentContext): ConversationalAgent {
+        const client: LLMClient = {
+          model: "test-model",
+          provider: "openai",
+          capabilities: defaultCapabilities,
+          async invoke() {
+            throw new Error("invoke should not be called");
+          },
+          async *stream() {
+            yield { type: "text.delta", delta: "Hello" };
+            yield { type: "text.delta", delta: " world" };
+            yield {
+              type: "tool_call.arguments.done",
+              toolCallId: "tool-1",
+              name: "read_file",
+              arguments: { path: "README.md" },
+            };
+            yield { type: "text.delta", delta: "Done." };
+            yield { type: "response.completed", result: makeResult("Hello worldDone.") };
+          },
+          estimateTokens: () => 10,
+        };
+        return new ConversationalAgent({
+          context: ctx,
+          client,
+          instructions: "Segmented streaming agent",
+        });
+      }
+
+      const registry = new AgentRegistry({
+        agents: [{ create: segmentedStreamingAgent, agentId: "test" }],
+      });
+      const persistence = stubPersistence();
+      const deps: AgentToolDeps = {
+        registry,
+        persistence,
+        sendNotification: vi.fn(async (method: string, params: Record<string, unknown>) => {
+          notifications.push({ method, params });
+        }),
+      };
+
+      await handleAgentRun(deps, {
+        message: "Hello",
+        agentId: "test",
+        sessionId: "sess-part-boundaries",
+        stream: true,
+      });
+
+      expect(notifications).toEqual(expect.arrayContaining([
+        {
+          method: "agent/stream-response",
+          params: {
+            type: "agent.part_added",
+            part: { type: "text" },
+          },
+        },
+        {
+          method: "agent/stream-response",
+          params: {
+            type: "agent.text_delta",
+            delta: "Hello",
+          },
+        },
+        {
+          method: "agent/stream-response",
+          params: {
+            type: "agent.text_delta",
+            delta: " world",
+          },
+        },
+        {
+          method: "agent/stream-response",
+          params: {
+            type: "agent.part_done",
+            part: { type: "text", text: "Hello world" },
+          },
+        },
+        {
+          method: "agent/stream-response",
+          params: {
+            type: "agent.tool_call",
+            summary: "read_file",
+            toolCallId: "tool-1",
+            arguments: { path: "README.md" },
+            description: '{\n  "path": "README.md"\n}',
+          },
+        },
+        {
+          method: "agent/stream-response",
+          params: {
+            type: "agent.part_added",
+            part: { type: "text" },
+          },
+        },
+        {
+          method: "agent/stream-response",
+          params: {
+            type: "agent.text_delta",
+            delta: "Done.",
+          },
+        },
+        {
+          method: "agent/stream-response",
+          params: {
+            type: "agent.part_done",
+            part: { type: "text", text: "Done." },
+          },
+        },
+      ]));
+    });
+
     it("forwards artifact stream notifications and persists artifact timeline items", async () => {
       const notifications: Array<{ method: string; params: Record<string, unknown> }> = [];
       function streamingArtifactAgent(ctx: AgentContext): ConversationalAgent {

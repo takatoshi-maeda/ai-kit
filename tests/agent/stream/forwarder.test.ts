@@ -47,16 +47,21 @@ async function collect(stream: AsyncIterable<AgentStreamResponse>): Promise<Agen
 // --- Tests ---
 
 describe("AgentStreamForwarder", () => {
-  it("converts text.delta to agent.text_delta", async () => {
+  it("wraps text deltas with part lifecycle events", async () => {
     const forwarder = new AgentStreamForwarder();
     const events: LLMStreamEvent[] = [
       { type: "text.delta", delta: "Hello" },
+      { type: "text.delta", delta: " world" },
+      { type: "text.done", text: "Hello world" },
     ];
 
     const results = await collect(forwarder.forward(toStream(events)));
 
     expect(results).toEqual([
+      { type: "agent.part_added", part: { type: "text" } },
       { type: "agent.text_delta", delta: "Hello" },
+      { type: "agent.text_delta", delta: " world" },
+      { type: "agent.part_done", part: { type: "text", text: "Hello world" } },
     ]);
   });
 
@@ -235,13 +240,17 @@ describe("AgentStreamForwarder", () => {
 
     const results = await collect(forwarder.forward(toStream(events)));
 
-    expect(results).toHaveLength(2);
+    expect(results).toHaveLength(3);
     expect(results[0]).toEqual({
       type: "agent.progress",
       summary: "Unhandled event: response.created",
       description: "",
     });
     expect(results[1]).toEqual({
+      type: "agent.part_added",
+      part: { type: "text" },
+    });
+    expect(results[2]).toEqual({
       type: "agent.text_delta",
       delta: "Hi",
     });
@@ -265,8 +274,10 @@ describe("AgentStreamForwarder", () => {
 
     expect(results).toEqual([
       { type: "agent.reasoning_delta", delta: "Let me think" },
+      { type: "agent.part_added", part: { type: "text" } },
       { type: "agent.text_delta", delta: "The answer " },
       { type: "agent.text_delta", delta: "is 42." },
+      { type: "agent.part_done", part: { type: "text", text: "The answer is 42." } },
       {
         type: "agent.result",
         resultType: "text",

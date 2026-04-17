@@ -131,6 +131,7 @@ export interface AgentRunResult {
 export type McpStreamNotification =
   | { type: "agent.change_state.started"; sessionId: string; runId: string; agentId?: string; agentName?: string }
   | { type: "agent.reasoning_summary_delta"; delta: string }
+  | { type: "agent.part_added"; part: { type: "text" } }
   | {
       type: "agent.output_item.added";
       itemId: string;
@@ -157,6 +158,7 @@ export type McpStreamNotification =
     }
   | { type: "agent.tool_call_finish"; summary: string; toolCallId?: string; status: "completed" | "failed"; errorMessage?: string }
   | { type: "agent.text_delta"; delta: string }
+  | { type: "agent.part_done"; part: { type: "text"; text: string } }
   | { type: "agent.text_result"; summary?: string; description?: string; responseId?: string }
   | { type: "agent.result"; responseId?: string; item?: Record<string, unknown> }
   | { type: "agent.cumulative_cost"; amount: number }
@@ -395,6 +397,7 @@ export async function handleAgentRun(
       const agentStream = agent.stream(llmInput, additionalInstructions);
       let agentResult: Awaited<typeof agentStream.result>;
       try {
+        const textPartState = { active: false, text: "" };
         for await (const event of agentStream) {
           if (event.type === "response.completed" && provider && model) {
             const nextUsageCostSession = appendUsageToSerializedUsageCostSessionState(
@@ -413,7 +416,7 @@ export async function handleAgentRun(
               partialAssistantMessage += delta;
             },
           );
-          await forwardStreamEvent(event, deps.sendNotification);
+          await forwardStreamEvent(event, deps.sendNotification, textPartState);
           if (timelineChanged || event.type === "response.completed") {
             await deps.persistence.appendRunState(sessionId, {
               runId,
@@ -608,21 +611,36 @@ export async function handleAgentRun(
 async function forwardStreamEvent(
   event: LLMStreamEvent,
   sendNotification: (method: string, params: Record<string, unknown>) => Promise<void>,
+  textPartState: { active: boolean; text: string },
 ): Promise<void> {
   switch (event.type) {
     case "text.delta":
+      if (!textPartState.active) {
+        textPartState.active = true;
+        textPartState.text = "";
+        await sendNotification("agent/stream-response", {
+          type: "agent.part_added",
+          part: { type: "text" },
+        });
+      }
+      textPartState.text += event.delta;
       await sendNotification("agent/stream-response", {
         type: "agent.text_delta",
         delta: event.delta,
       });
       break;
+    case "text.done":
+      await flushActiveTextPart(sendNotification, textPartState, event.text);
+      break;
     case "reasoning.delta":
+      await flushActiveTextPart(sendNotification, textPartState);
       await sendNotification("agent/stream-response", {
         type: "agent.reasoning_summary_delta",
         delta: event.delta,
       });
       break;
     case "output_item.added":
+      await flushActiveTextPart(sendNotification, textPartState);
       await sendNotification("agent/stream-response", {
         type: "agent.output_item.added",
         itemId: event.itemId,
@@ -631,6 +649,7 @@ async function forwardStreamEvent(
       });
       break;
     case "artifact.delta":
+      await flushActiveTextPart(sendNotification, textPartState);
       await sendNotification("agent/stream-response", {
         type: "agent.artifact_delta",
         itemId: event.itemId,
@@ -638,6 +657,7 @@ async function forwardStreamEvent(
       });
       break;
     case "output_item.done":
+      await flushActiveTextPart(sendNotification, textPartState);
       await sendNotification("agent/stream-response", {
         type: "agent.output_item.done",
         itemId: event.itemId,
@@ -646,6 +666,7 @@ async function forwardStreamEvent(
       });
       break;
     case "tool_call.arguments.done":
+      await flushActiveTextPart(sendNotification, textPartState);
       await sendNotification("agent/stream-response", {
         type: "agent.tool_call",
         summary: event.name,
@@ -655,6 +676,7 @@ async function forwardStreamEvent(
       });
       break;
     case "response.completed":
+      await flushActiveTextPart(sendNotification, textPartState);
       if (event.result.content) {
         await sendNotification("agent/stream-response", {
           type: "agent.text_result",
@@ -663,6 +685,7 @@ async function forwardStreamEvent(
       }
       break;
     case "tool_result":
+      await flushActiveTextPart(sendNotification, textPartState);
       await sendNotification("agent/stream-response", {
         type: "agent.tool_call_finish",
         summary: event.name,
@@ -672,6 +695,27 @@ async function forwardStreamEvent(
       });
       break;
   }
+}
+
+async function flushActiveTextPart(
+  sendNotification: (method: string, params: Record<string, unknown>) => Promise<void>,
+  textPartState: { active: boolean; text: string },
+  completedText?: string,
+): Promise<void> {
+  if (!textPartState.active) {
+    return;
+  }
+
+  const text = completedText ?? textPartState.text;
+  textPartState.active = false;
+  textPartState.text = "";
+  await sendNotification("agent/stream-response", {
+    type: "agent.part_done",
+    part: {
+      type: "text",
+      text,
+    },
+  });
 }
 
 function applyStreamEventToTimeline(
