@@ -1,6 +1,8 @@
 import { z } from "zod";
 import type { AuthContext } from "../../../auth/index.js";
+import { isAbortError } from "../../errors.js";
 import type { AgentRegistry } from "../agent-registry.js";
+import type { ActiveRunRegistry } from "../active-run-registry.js";
 import type { McpPersistence, ConversationTurn, TimelineItem } from "../persistence.js";
 import { AgentContextImpl } from "../../context.js";
 import { InMemoryHistory } from "../../conversation/memory-history.js";
@@ -113,6 +115,15 @@ export const AgentRunParamsSchema = z.object({
 
 export type AgentRunParams = z.infer<typeof AgentRunParamsSchema>;
 
+export const AgentCancelParamsSchema = z.object({
+  sessionId: z.string().describe("Session ID for the active run"),
+  runId: z.string().describe("Run ID to cancel"),
+  agentId: z.string().optional().describe("Agent ID to narrow cancellation"),
+  reason: z.string().optional().describe("Optional cancellation reason"),
+});
+
+export type AgentCancelParams = z.infer<typeof AgentCancelParamsSchema>;
+
 /** agent.run ツールの戻り値 */
 export interface AgentRunResult {
   sessionId: string;
@@ -169,12 +180,20 @@ export type McpStreamNotification =
 export interface AgentToolDeps {
   registry: AgentRegistry;
   persistence: McpPersistence;
+  activeRunRegistry?: ActiveRunRegistry;
   authContext?: AuthContext;
   sendNotification?: (method: string, params: Record<string, unknown>) => Promise<void>;
   appName?: string;
   publicAssetStorage?: PublicAssetStorage;
   publicAssetsDir?: string;
   publicAssetsBasePath?: string;
+}
+
+export interface AgentCancelResult {
+  status: "cancelled" | "not_running";
+  sessionId: string;
+  runId: string;
+  agentId?: string;
 }
 
 const MAX_BASE64_IMAGE_BYTES_PER_TURN = 2 * 1024 * 1024;
@@ -390,11 +409,23 @@ export async function handleAgentRun(
   }
 
   let result: AgentRunResult;
+  const abortController = new AbortController();
+  const activeRunHandle = {
+    appName: deps.appName ?? "default",
+    userId: deps.authContext?.userId ?? "anonymous",
+    agentId,
+    sessionId,
+    runId,
+    controller: abortController,
+  };
 
   try {
+    deps.activeRunRegistry?.register(activeRunHandle);
     if (enableStream && deps.sendNotification) {
       // Run with streaming notifications
-      const agentStream = agent.stream(llmInput, additionalInstructions);
+      const agentStream = agent.stream(llmInput, additionalInstructions, {
+        signal: abortController.signal,
+      });
       let agentResult: Awaited<typeof agentStream.result>;
       try {
         const textPartState = { active: false, text: "" };
@@ -458,8 +489,8 @@ export async function handleAgentRun(
         sessionId,
         runId,
         turnId,
-      status: "success",
-      responseId: agentResult.responseId ?? undefined,
+        status: "success",
+        responseId: agentResult.responseId ?? undefined,
         message: agentResult.content ?? "",
         agentId,
         idempotencyKey,
@@ -488,14 +519,16 @@ export async function handleAgentRun(
       });
     } else {
       // Non-streaming run
-      const agentResult = await agent.invoke(llmInput, additionalInstructions);
+      const agentResult = await agent.invoke(llmInput, additionalInstructions, {
+        signal: abortController.signal,
+      });
 
       result = {
         sessionId,
         runId,
         turnId,
-      status: "success",
-      responseId: agentResult.responseId ?? undefined,
+        status: "success",
+        responseId: agentResult.responseId ?? undefined,
         message: agentResult.content ?? "",
         agentId,
         idempotencyKey,
@@ -541,6 +574,7 @@ export async function handleAgentRun(
 
     await deps.persistence.deleteRunState(sessionId, runId, agentId);
   } catch (err) {
+    const cancelled = abortController.signal.aborted || isAbortError(err);
     const errorMessage =
       err instanceof Error ? err.message : String(err);
 
@@ -548,26 +582,28 @@ export async function handleAgentRun(
       sessionId,
       runId,
       turnId,
-      status: "error",
-      message: "",
+      status: cancelled ? "cancelled" : "error",
+      message: cancelled ? partialAssistantMessage : "",
       agentId,
       idempotencyKey,
-      errorMessage,
+      errorMessage: cancelled ? undefined : errorMessage,
       runtime: resolvedRuntime,
     };
 
-    // Persist error turn
+    // Persist terminal turn
     const turn: ConversationTurn = {
       turnId,
       runId,
       timestamp: new Date().toISOString(),
       userMessage: userMessagePreview,
       userContent: userInput,
-      assistantMessage: "",
+      assistantMessage: cancelled ? partialAssistantMessage : "",
       responseId: undefined,
-      status: "error",
-      errorMessage,
-      timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
+      status: cancelled ? "cancelled" : "error",
+      errorMessage: cancelled ? undefined : errorMessage,
+      timeline: runTimeline.length > 0
+        ? (cancelled ? cloneTimeline(runTimeline) : finalizeTimeline(runTimeline))
+        : undefined,
       agentId,
       runtime: resolvedRuntime,
     };
@@ -577,12 +613,14 @@ export async function handleAgentRun(
 
     if (enableStream && deps.sendNotification) {
       await deps.sendNotification("agent/stream-response", {
-        type: "agent.change_state.error",
+        type: cancelled ? "agent.change_state.cancelled" : "agent.change_state.error",
         sessionId,
         runId,
         agentId,
       });
     }
+  } finally {
+    deps.activeRunRegistry?.unregister(activeRunHandle);
   }
 
   const payload = toAgentRunWireResult(result);
@@ -605,6 +643,37 @@ export async function handleAgentRun(
     content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
     structuredContent: payload,
     isError: result.status === "error",
+  };
+}
+
+export async function handleAgentCancel(
+  deps: AgentToolDeps,
+  params: AgentCancelParams,
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent: Record<string, unknown>;
+  isError: boolean;
+}> {
+  const payload: AgentCancelResult = {
+    status: deps.activeRunRegistry?.cancel({
+      appName: deps.appName ?? "default",
+      userId: deps.authContext?.userId ?? "anonymous",
+      sessionId: params.sessionId,
+      runId: params.runId,
+      agentId: params.agentId,
+      reason: params.reason,
+    })
+      ? "cancelled"
+      : "not_running",
+    sessionId: params.sessionId,
+    runId: params.runId,
+    agentId: params.agentId,
+  };
+
+  return {
+    content: [{ type: "text", text: JSON.stringify(payload, null, 2) }],
+    structuredContent: payload as unknown as Record<string, unknown>,
+    isError: false,
   };
 }
 

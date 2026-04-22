@@ -66,6 +66,10 @@ export interface LLMChatInput {
   previousResponseId?: string;
 }
 
+export interface LLMCallOptions {
+  signal?: AbortSignal;
+}
+
 export interface LLMUsage {
   inputTokens: number;
   outputTokens: number;

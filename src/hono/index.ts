@@ -1,5 +1,6 @@
 import { buildMcpServer } from "../agent/mcp/server.js";
 import { AgentRegistry } from "../agent/mcp/agent-registry.js";
+import { ActiveRunRegistry } from "../agent/mcp/active-run-registry.js";
 import type { McpPersistence } from "../agent/mcp/persistence.js";
 import {
   AuthError,
@@ -117,6 +118,7 @@ export interface AgentMount {
   runtimeResolver: PersistenceBundleResolver;
   auth: AuthBackendOptions;
   authBackend: AuthBackend;
+  activeRunRegistry: ActiveRunRegistry;
 }
 
 export interface MountMcpRoutesOptions {
@@ -639,6 +641,7 @@ async function initAgentMounts(
       })),
       defaultAgentId: definition.defaultAgentId,
     });
+    const activeRunRegistry = new ActiveRunRegistry();
 
     const mcpServer = buildMcpServer({
       serverName: definition.appName,
@@ -648,6 +651,7 @@ async function initAgentMounts(
       publicAssetStorage: bundle.publicAssetStorage,
       publicAssetsDir: bundle.publicAssetsDir,
       publicAssetsBasePath: `${basePath.replace(/\/+$/, "")}/${definition.appName}/public`,
+      activeRunRegistry,
     });
 
     const transport = new InProcessMcpTransport();
@@ -666,6 +670,7 @@ async function initAgentMounts(
       runtimeResolver,
       auth,
       authBackend,
+      activeRunRegistry,
     };
 
     if (onMountCreated) {
@@ -732,10 +737,6 @@ function sseResponseFromRequest(
   const notificationToken = extractNotificationToken(message);
   let streamClosed = false;
   let unsubscribe: (() => void) | null = null;
-  let requestId: string | number | null = null;
-  if (typeof message.id === "string" || typeof message.id === "number") {
-    requestId = message.id;
-  }
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const send = (payload: unknown) => {
@@ -781,19 +782,6 @@ function sseResponseFromRequest(
       unsubscribe?.();
       unsubscribe = null;
       streamClosed = true;
-      if (requestId === null) {
-        return;
-      }
-      // Propagate HTTP/SSE disconnect to the underlying MCP request so tool
-      // handlers can observe extra.signal.aborted and stop long-running work.
-      transport.notify({
-        jsonrpc: "2.0",
-        method: "notifications/cancelled",
-        params: {
-          requestId,
-          reason: "client disconnected",
-        },
-      } as unknown as JSONRPCMessage);
     },
   });
 

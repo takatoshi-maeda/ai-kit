@@ -1,4 +1,4 @@
-import type { LLMChatInput, LLMResult } from "../types/llm.js";
+import type { LLMCallOptions, LLMChatInput, LLMResult } from "../types/llm.js";
 import type { ModelCapabilities } from "../types/model.js";
 import type { LLMStreamEvent } from "../types/stream-events.js";
 
@@ -8,8 +8,8 @@ export interface LLMClient {
   readonly model: string;
   readonly provider: LLMProvider;
   readonly capabilities: ModelCapabilities;
-  invoke(input: LLMChatInput): Promise<LLMResult>;
-  stream(input: LLMChatInput): AsyncIterable<LLMStreamEvent>;
+  invoke(input: LLMChatInput, options?: LLMCallOptions): Promise<LLMResult>;
+  stream(input: LLMChatInput, options?: LLMCallOptions): AsyncIterable<LLMStreamEvent>;
   estimateTokens(content: string): number;
 }
 

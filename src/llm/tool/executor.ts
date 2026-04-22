@@ -5,6 +5,7 @@ import {
   type ToolDefinition,
   type LLMToolCall,
   type LLMToolResult,
+  type ToolExecutionOptions,
 } from "../../types/tool.js";
 
 export class ToolExecutor {
@@ -20,7 +21,10 @@ export class ToolExecutor {
     return this.toolMap.get(name);
   }
 
-  async execute(toolCall: LLMToolCall): Promise<LLMToolResult> {
+  async execute(
+    toolCall: LLMToolCall,
+    options?: ToolExecutionOptions,
+  ): Promise<LLMToolResult> {
     const tool = this.toolMap.get(toolCall.name);
     if (!tool) {
       return {
@@ -32,7 +36,7 @@ export class ToolExecutor {
 
     try {
       const parsed = tool.parameters.parse(toolCall.arguments);
-      const result = await tool.execute(parsed);
+      const result = await tool.execute(parsed, options);
       return {
         toolCallId: toolCall.id,
         content: typeof result === "string" ? result : JSON.stringify(result),
@@ -52,9 +56,12 @@ export class ToolExecutor {
     }
   }
 
-  async executeAll(toolCalls: LLMToolCall[]): Promise<LLMToolResult[]> {
+  async executeAll(
+    toolCalls: LLMToolCall[],
+    options?: ToolExecutionOptions,
+  ): Promise<LLMToolResult[]> {
     const results = await Promise.allSettled(
-      toolCalls.map((tc) => this.execute(tc)),
+      toolCalls.map((tc) => this.execute(tc, options)),
     );
 
     return results.map((r, i) => {

@@ -1,5 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type {
+  LLMCallOptions,
   LLMChatInput,
   LLMMessage,
   LLMResult,
@@ -46,7 +47,7 @@ export class AnthropicClient implements LLMClient {
     };
   }
 
-  async invoke(input: LLMChatInput): Promise<LLMResult> {
+  async invoke(input: LLMChatInput, _options?: LLMCallOptions): Promise<LLMResult> {
     const params = this.buildParams(input);
     const retryCount = this.options.retryCount ?? 0;
 
@@ -60,7 +61,7 @@ export class AnthropicClient implements LLMClient {
     return this.mapResponse(response as Anthropic.Message);
   }
 
-  async *stream(input: LLMChatInput): AsyncIterable<LLMStreamEvent> {
+  async *stream(input: LLMChatInput, _options?: LLMCallOptions): AsyncIterable<LLMStreamEvent> {
     const params = this.buildParams(input);
 
     let stream: ReturnType<typeof this.client.messages.stream>;

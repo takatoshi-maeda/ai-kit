@@ -3,7 +3,7 @@ import { OpenAIClient } from "./providers/openai.js";
 import { AnthropicClient } from "./providers/anthropic.js";
 import { GoogleClient } from "./providers/google.js";
 import { PerplexityClient } from "./providers/perplexity.js";
-import type { LLMResult } from "../types/llm.js";
+import type { LLMCallOptions, LLMResult } from "../types/llm.js";
 import type { LLMStreamEvent } from "../types/stream-events.js";
 import { startObservation, withObservation } from "../tracing/langfuse.js";
 import type { LLMProvider } from "./client.js";
@@ -50,7 +50,7 @@ function createTracedLLMClient(client: LLMClient): LLMClient {
     estimateTokens(content: string): number {
       return client.estimateTokens(content);
     },
-    invoke(input) {
+    invoke(input, options) {
       return withObservation(
         "llm.invoke",
         {
@@ -60,7 +60,7 @@ function createTracedLLMClient(client: LLMClient): LLMClient {
           metadata: buildTracingMetadata(client.provider, "invoke"),
         },
         async (observation) => {
-          const rawResult = await client.invoke(input);
+          const rawResult = await client.invoke(input, options);
           const result = {
             ...rawResult,
             usage: billUsageForCurrentSession(
@@ -81,8 +81,8 @@ function createTracedLLMClient(client: LLMClient): LLMClient {
         },
       );
     },
-    stream(input) {
-      return tracedStream(client, input);
+    stream(input, options) {
+      return tracedStream(client, input, options);
     },
   };
 }
@@ -90,6 +90,7 @@ function createTracedLLMClient(client: LLMClient): LLMClient {
 async function *tracedStream(
   client: LLMClient,
   input: Parameters<LLMClient["stream"]>[0],
+  options?: LLMCallOptions,
 ): AsyncIterable<LLMStreamEvent> {
   const observationPromise = startObservation("llm.stream", {
     type: "generation",
@@ -102,7 +103,7 @@ async function *tracedStream(
   let streamError: Error | null = null;
 
   try {
-    for await (const event of client.stream(input)) {
+    for await (const event of client.stream(input, options)) {
       if (event.type === "response.completed") {
         completedResult = {
           ...event.result,

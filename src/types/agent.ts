@@ -1,6 +1,6 @@
 import type { ZodType } from "zod";
 import type { AuthContext } from "../auth/index.js";
-import type { LLMChatInput, LLMResult, LLMUsage } from "./llm.js";
+import type { LLMCallOptions, LLMChatInput, LLMResult, LLMUsage } from "./llm.js";
 import type {
   AgentTool,
   LLMToolCall,
@@ -45,6 +45,10 @@ export interface AgentOptions {
   memory?: AgentMemory;
   maxTurns?: number;
   nativeToolRuntime?: NativeToolRuntime;
+}
+
+export interface AgentInvocationOptions {
+  signal?: AbortSignal;
 }
 
 export interface AgentSkillResolverContext {
@@ -142,9 +146,11 @@ export interface LLMClient {
   readonly capabilities: import("./model.js").ModelCapabilities;
   invoke(
     input: LLMChatInput,
+    options?: LLMCallOptions,
   ): Promise<LLMResult>;
   stream(
     input: LLMChatInput,
+    options?: LLMCallOptions,
   ): AsyncIterable<import("./stream-events.js").LLMStreamEvent>;
   estimateTokens(content: string): number;
 }

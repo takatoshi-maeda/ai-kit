@@ -4,8 +4,11 @@ import { getRequestRuntimeScope, type AuthContext } from "../../auth/index.js";
 import type { AgentRegistry } from "./agent-registry.js";
 import type { McpPersistence } from "./persistence.js";
 import type { PublicAssetStorage } from "../public-assets/storage.js";
+import { ActiveRunRegistry } from "./active-run-registry.js";
 import {
   AgentRunParamsSchema,
+  AgentCancelParamsSchema,
+  handleAgentCancel,
   handleAgentList,
   handleAgentRun,
 } from "./tools/agent.js";
@@ -45,6 +48,8 @@ export interface McpServerOptions {
   publicAssetsDir?: string;
   /** 公開アセット配信用の URL ベースパス */
   publicAssetsBasePath?: string;
+  /** 実行中 run のプロセス内レジストリ */
+  activeRunRegistry?: ActiveRunRegistry;
 }
 
 /**
@@ -60,6 +65,7 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
     publicAssetStorage,
     publicAssetsDir,
     publicAssetsBasePath,
+    activeRunRegistry = new ActiveRunRegistry(),
   } = options;
 
   const server = new SdkMcpServer(
@@ -80,6 +86,7 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
       const deps: AgentToolDeps = {
         registry: agentRegistry,
         persistence: runtime.persistence,
+        activeRunRegistry,
         authContext: runtime.auth,
       };
       return handleAgentList(deps);
@@ -99,6 +106,7 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
       const deps: AgentToolDeps = {
         registry: agentRegistry,
         persistence: runtime.persistence,
+        activeRunRegistry,
         appName,
         publicAssetStorage: runtime.publicAssetStorage,
         publicAssetsDir: runtime.publicAssetsDir,
@@ -117,6 +125,27 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
         },
       };
       return handleAgentRun(deps, parsed);
+    });
+
+    const cancelShape = extractShape(AgentCancelParamsSchema);
+    server.registerTool("agent.cancel", {
+      description: "Cancel an active agent run",
+      inputSchema: cancelShape,
+    }, async (args) => {
+      const parsed = AgentCancelParamsSchema.parse(args);
+      const runtime = resolveRuntimeServices(
+        persistence,
+        publicAssetStorage,
+        publicAssetsDir,
+      );
+      const deps: AgentToolDeps = {
+        registry: agentRegistry,
+        persistence: runtime.persistence,
+        activeRunRegistry,
+        appName,
+        authContext: runtime.auth,
+      };
+      return handleAgentCancel(deps, parsed);
     });
   }
 

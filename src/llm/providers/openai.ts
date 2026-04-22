@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type {
+  LLMCallOptions,
   LLMChatInput,
   LLMMessage,
   LLMResult,
@@ -57,12 +58,12 @@ export class OpenAIClient implements LLMClient {
     };
   }
 
-  async invoke(input: LLMChatInput): Promise<LLMResult> {
+  async invoke(input: LLMChatInput, options?: LLMCallOptions): Promise<LLMResult> {
     const params = this.buildParams(input);
     const retryCount = this.options.retryCount ?? 0;
 
     const response = await withRetry(
-      () => this.client.responses.create(params),
+      () => this.client.responses.create(params, { signal: options?.signal }),
       { maxRetries: retryCount },
     ).catch((error) => {
       throw this.mapError(error);
@@ -71,12 +72,12 @@ export class OpenAIClient implements LLMClient {
     return this.mapResponse(response);
   }
 
-  async *stream(input: LLMChatInput): AsyncIterable<LLMStreamEvent> {
+  async *stream(input: LLMChatInput, options?: LLMCallOptions): AsyncIterable<LLMStreamEvent> {
     const { stream: _unused, ...baseParams } = this.buildParams(input);
 
     let stream: ReturnType<typeof this.client.responses.stream>;
     try {
-      stream = this.client.responses.stream(baseParams);
+      stream = this.client.responses.stream(baseParams, { signal: options?.signal });
     } catch (error) {
       throw this.mapError(error);
     }

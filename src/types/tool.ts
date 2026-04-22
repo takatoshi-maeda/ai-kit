@@ -7,7 +7,14 @@ export interface ToolDefinition<
   name: string;
   description: string;
   parameters: TParams;
-  execute: (params: z.infer<TParams>) => Promise<TResult>;
+  execute: (
+    params: z.infer<TParams>,
+    options?: ToolExecutionOptions,
+  ) => Promise<TResult>;
+}
+
+export interface ToolExecutionOptions {
+  signal?: AbortSignal;
 }
 
 export type ToolExecutionKind = "user_function" | "provider_native";

@@ -3,8 +3,13 @@ import { z } from "zod";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { handleAgentList, handleAgentRun } from "../../../../src/agent/mcp/tools/agent.js";
+import {
+  handleAgentCancel,
+  handleAgentList,
+  handleAgentRun,
+} from "../../../../src/agent/mcp/tools/agent.js";
 import type { AgentToolDeps } from "../../../../src/agent/mcp/tools/agent.js";
+import { ActiveRunRegistry } from "../../../../src/agent/mcp/active-run-registry.js";
 import { AgentRegistry } from "../../../../src/agent/mcp/agent-registry.js";
 import { JsonlMcpPersistence } from "../../../../src/agent/mcp/jsonl-persistence.js";
 import { handleConversationsGet } from "../../../../src/agent/mcp/tools/conversations.js";
@@ -31,6 +36,7 @@ function stubPersistence(): McpPersistence {
     listConversationSummaries: vi.fn(async () => []),
     deleteConversation: vi.fn(async () => false),
     appendConversationTurn: vi.fn(async () => {}),
+    appendSessionState: vi.fn(async () => {}),
     appendRunState: vi.fn(async () => {}),
     deleteRunState: vi.fn(async () => {}),
     appendInputMessageHistory: vi.fn(async () => {}),
@@ -306,6 +312,174 @@ describe("agent tools", () => {
         expect.any(String),
         expect.any(String),
       );
+    });
+
+    it("returns not_running when cancelling a missing run", async () => {
+      const registry = new AgentRegistry({
+        agents: [{ create: createTestAgent, agentId: "test" }],
+      });
+      const persistence = stubPersistence();
+      const deps: AgentToolDeps = {
+        registry,
+        persistence,
+        activeRunRegistry: new ActiveRunRegistry(),
+      };
+
+      const result = await handleAgentCancel(deps, {
+        sessionId: "sess-1",
+        runId: "run-1",
+      });
+
+      expect(result.structuredContent).toEqual({
+        status: "not_running",
+        sessionId: "sess-1",
+        runId: "run-1",
+        agentId: undefined,
+      });
+      expect(result.isError).toBe(false);
+    });
+
+    it("cancels an active run, persists partial output, and records cancelled idempotency", async () => {
+      let enteredWait!: () => void;
+      const waitStarted = new Promise<void>((resolve) => {
+        enteredWait = resolve;
+      });
+
+      function cancellableAgent(ctx: AgentContext): ConversationalAgent {
+        const client: LLMClient = {
+          model: "test-model",
+          provider: "openai",
+          capabilities: defaultCapabilities,
+          async invoke() {
+            throw new Error("invoke should not be called");
+          },
+          async *stream(_input, options) {
+            yield { type: "response.created", responseId: "resp-cancel" };
+            yield { type: "text.delta", delta: "partial" };
+            enteredWait();
+            await new Promise<never>((_resolve, reject) => {
+              options?.signal?.addEventListener("abort", () => {
+                reject(new DOMException("This operation was aborted", "AbortError"));
+              }, { once: true });
+            });
+            yield { type: "text.done", text: "partial done" };
+            yield {
+              type: "response.completed",
+              result: makeResult("partial done"),
+            };
+          },
+          estimateTokens: () => 10,
+        };
+        return new ConversationalAgent({
+          context: ctx,
+          client,
+          instructions: "Cancellable agent",
+        });
+      }
+
+      const sendNotification = vi.fn(async () => {});
+
+      const registry = new AgentRegistry({
+        agents: [{ create: cancellableAgent, agentId: "test" }],
+      });
+      const persistence = stubPersistence();
+      const activeRunRegistry = new ActiveRunRegistry();
+      const deps: AgentToolDeps = {
+        registry,
+        persistence,
+        activeRunRegistry,
+        sendNotification,
+      };
+
+      const runPromise = handleAgentRun(deps, {
+        message: "Hello",
+        agentId: "test",
+        sessionId: "sess-cancel",
+        idempotencyKey: "idem-cancel",
+        stream: true,
+      });
+
+      await waitStarted;
+      const startedState = (persistence.appendRunState as ReturnType<typeof vi.fn>).mock.calls[0]?.[1] as {
+        runId?: string;
+      } | undefined;
+      expect(startedState?.runId).toBeTruthy();
+
+      const cancelResult = await handleAgentCancel({
+        ...deps,
+        authContext: { userId: "anonymous" } as never,
+      }, {
+        sessionId: "sess-cancel",
+        runId: startedState!.runId!,
+        agentId: "test",
+      });
+      expect(cancelResult.structuredContent).toMatchObject({
+        status: "cancelled",
+        sessionId: "sess-cancel",
+        runId: startedState!.runId!,
+        agentId: "test",
+      });
+
+      const runResult = await runPromise;
+      const payload = runResult.structuredContent as Record<string, unknown>;
+
+      expect(payload.status).toBe("cancelled");
+      expect(payload.message).toBe("partial");
+      expect(runResult.isError).toBe(false);
+      expect(persistence.appendConversationTurn).toHaveBeenCalledWith(
+        "sess-cancel",
+        expect.objectContaining({
+          status: "cancelled",
+          assistantMessage: "partial",
+        }),
+        undefined,
+      );
+      expect(persistence.deleteRunState).toHaveBeenCalledWith(
+        "sess-cancel",
+        startedState!.runId!,
+        "test",
+      );
+      expect(sendNotification).toHaveBeenCalledWith("agent/stream-response", expect.objectContaining({
+        type: "agent.change_state.cancelled",
+      }));
+      expect(persistence.writeIdempotencyRecord).toHaveBeenCalledWith(expect.objectContaining({
+        idempotencyKey: "idem-cancel",
+        status: "cancelled",
+      }));
+    });
+
+    it("does not allow cancelling another user's active run", async () => {
+      const activeRunRegistry = new ActiveRunRegistry();
+      const controller = new AbortController();
+      activeRunRegistry.register({
+        appName: "alpha",
+        userId: "user-a",
+        agentId: "test",
+        sessionId: "sess-1",
+        runId: "run-1",
+        controller,
+      });
+      const registry = new AgentRegistry({
+        agents: [{ create: createTestAgent, agentId: "test" }],
+      });
+      const persistence = stubPersistence();
+
+      const result = await handleAgentCancel({
+        registry,
+        persistence,
+        activeRunRegistry,
+        appName: "alpha",
+        authContext: { userId: "user-b" } as never,
+      }, {
+        sessionId: "sess-1",
+        runId: "run-1",
+        agentId: "test",
+      });
+
+      expect(result.structuredContent).toMatchObject({
+        status: "not_running",
+      });
+      expect(controller.signal.aborted).toBe(false);
     });
 
     it("passes multimodal input via input and persists userContent", async () => {

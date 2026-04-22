@@ -1,6 +1,7 @@
 import { MaxTurnsExceededError } from "../errors.js";
 import type {
   AgentContext,
+  AgentInvocationOptions,
   AgentOptions,
   AgentResult,
   TurnResult,
@@ -62,6 +63,7 @@ export class ConversationalAgent {
   stream(
     input: string | ContentPart[],
     additionalInstructions?: string,
+    options?: AgentInvocationOptions,
   ): AgentStream {
     const self = this;
     const observationName =
@@ -128,7 +130,7 @@ export class ConversationalAgent {
     });
 
     let usageCostSession: ReturnType<typeof createUsageCostSessionRunner> | null = null;
-    const gen = self.runLoop(input, additionalInstructions, () => usageCostSession);
+    const gen = self.runLoop(input, additionalInstructions, () => usageCostSession, options);
 
     const wrappedIterator: AsyncIterableIterator<LLMStreamEvent> = {
       next: async () => {
@@ -201,8 +203,9 @@ export class ConversationalAgent {
   async invoke(
     input: string | ContentPart[],
     additionalInstructions?: string,
+    options?: AgentInvocationOptions,
   ): Promise<AgentResult> {
-    const agentStream = this.stream(input, additionalInstructions);
+    const agentStream = this.stream(input, additionalInstructions, options);
     try {
       for await (const _event of agentStream) {
         // Consume stream to drive the run loop
@@ -236,6 +239,7 @@ export class ConversationalAgent {
     input: string | ContentPart[],
     additionalInstructions?: string,
     getUsageCostSession?: () => ReturnType<typeof createUsageCostSessionRunner> | null,
+    options?: AgentInvocationOptions,
   ): AsyncGenerator<LLMStreamEvent, AgentResult> {
     const {
       context,
@@ -271,6 +275,7 @@ export class ConversationalAgent {
         enforcedQueue,
         pendingMessages,
         conversationMessages,
+        options,
       );
 
       // 2. Build chat input
@@ -293,7 +298,7 @@ export class ConversationalAgent {
 
       // 4. Stream LLM call, yield events, collect result
       const turnLLMResult = yield* this.streamAndCollect(
-        client.stream(chatInput),
+        client.stream(chatInput, options),
       );
 
       addUsage(rawRunUsage, turnLLMResult.usage);
@@ -328,6 +333,7 @@ export class ConversationalAgent {
           turnLLMResult.toolCalls,
           context,
           hooks,
+          options,
         );
         for (const toolCall of executedToolCalls) {
           const result = toolCall.result;
@@ -490,6 +496,7 @@ export class ConversationalAgent {
     toolCalls: LLMToolCall[],
     context: AgentContext,
     hooks: AgentOptions["hooks"],
+    options?: AgentInvocationOptions,
   ): Promise<LLMToolCall[]> {
     for (const toolCall of toolCalls) {
       await runBeforeToolCallHooks(hooks, {
@@ -513,7 +520,7 @@ export class ConversationalAgent {
         },
         async (observation) => {
           try {
-            const toolResult = await this.executeToolCall(toolCall, context);
+            const toolResult = await this.executeToolCall(toolCall, context, options);
             observation.update({
               output: toolResult.content,
               metadata: {
@@ -566,6 +573,7 @@ export class ConversationalAgent {
   private async executeToolCall(
     toolCall: LLMToolCall,
     context: AgentContext,
+    options?: AgentInvocationOptions,
   ) {
     if (toolCall.executionKind === "provider_native") {
       if (
@@ -581,19 +589,20 @@ export class ConversationalAgent {
       return this.options.nativeToolRuntime.execute(toolCall, context);
     }
 
-    return this.toolExecutor.execute(toolCall);
+    return this.toolExecutor.execute(toolCall, options);
   }
 
   private async executeEnforcedTools(
     queue: ToolDefinition[],
     pendingMessages: LLMMessage[],
     conversationMessages: LLMMessage[] = pendingMessages,
+    options?: AgentInvocationOptions,
   ): Promise<void> {
     while (queue.length > 0) {
       const tool = queue.shift()!;
       try {
         const parsed = tool.parameters.parse({});
-        const rawResult = await tool.execute(parsed);
+        const rawResult = await tool.execute(parsed, options);
         const content =
           typeof rawResult === "string" ? rawResult : JSON.stringify(rawResult);
         const message: LLMMessage = {

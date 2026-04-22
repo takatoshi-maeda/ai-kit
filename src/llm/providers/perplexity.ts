@@ -1,5 +1,6 @@
 import OpenAI from "openai";
 import type {
+  LLMCallOptions,
   LLMChatInput,
   LLMMessage,
   LLMResult,
@@ -41,7 +42,7 @@ export class PerplexityClient implements LLMClient {
     };
   }
 
-  async invoke(input: LLMChatInput): Promise<LLMResult> {
+  async invoke(input: LLMChatInput, _options?: LLMCallOptions): Promise<LLMResult> {
     const params = this.buildParams(input);
     const retryCount = this.options.retryCount ?? 0;
 
@@ -56,7 +57,7 @@ export class PerplexityClient implements LLMClient {
     return this.mapResponse(response);
   }
 
-  async *stream(input: LLMChatInput): AsyncIterable<LLMStreamEvent> {
+  async *stream(input: LLMChatInput, _options?: LLMCallOptions): AsyncIterable<LLMStreamEvent> {
     const params = { ...this.buildParams(input), stream: true as const };
 
     let stream: AsyncIterable<OpenAI.Chat.ChatCompletionChunk>;
