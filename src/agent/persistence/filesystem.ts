@@ -123,6 +123,56 @@ export class FilesystemPersistence implements AgentPersistence {
     return true;
   }
 
+  async forkConversation(
+    sessionId: string,
+    checkpointTurnIndex: number,
+    options?: {
+      agentId?: string;
+      forkSessionId?: string;
+    },
+  ): Promise<{ sessionId: string; copiedTurnCount: number }> {
+    const sourceAgentId = options?.agentId;
+    const sourceConversation = await this.readConversation(sessionId, sourceAgentId);
+    if (!sourceConversation) {
+      throw new Error("conversation_not_found");
+    }
+    if (sourceConversation.inProgress) {
+      throw new Error("conversation_in_progress");
+    }
+    if (
+      !Number.isInteger(checkpointTurnIndex) ||
+      checkpointTurnIndex < 0 ||
+      checkpointTurnIndex > sourceConversation.turns.length
+    ) {
+      throw new Error("checkpoint_index_out_of_range");
+    }
+
+    const forkSessionId = options?.forkSessionId ?? crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+    const raw = await this.storage.readText(this.conversationPath(sessionId, sourceAgentId));
+    const records = raw ? parseJsonl<ConversationRecord>(raw) : [];
+    const forkedRecords = sliceConversationRecordsForCheckpoint(records, checkpointTurnIndex);
+
+    await this.writeConversationMeta(forkSessionId, sourceConversation.agentId, {
+      title: sourceConversation.title,
+      agentId: sourceConversation.agentId,
+      agentName: sourceConversation.agentName,
+      timestamp,
+    });
+
+    if (forkedRecords.length > 0) {
+      await this.storage.writeText(
+        this.conversationPath(forkSessionId, sourceConversation.agentId),
+        forkedRecords.map((record) => JSON.stringify(record)).join("\n") + "\n",
+      );
+    }
+
+    return {
+      sessionId: forkSessionId,
+      copiedTurnCount: checkpointTurnIndex,
+    };
+  }
+
   async appendConversationTurn(
     sessionId: string,
     turn: ConversationTurn,
@@ -409,4 +459,22 @@ function uniqueConversationCandidates(
     seen.add(key);
     return true;
   });
+}
+
+function sliceConversationRecordsForCheckpoint(
+  records: ConversationRecord[],
+  checkpointTurnIndex: number,
+): ConversationRecord[] {
+  const forkedRecords: ConversationRecord[] = [];
+  let copiedTurns = 0;
+  for (const record of records) {
+    if (record.type === "turn" && copiedTurns >= checkpointTurnIndex) {
+      break;
+    }
+    forkedRecords.push(record);
+    if (record.type === "turn") {
+      copiedTurns += 1;
+    }
+  }
+  return forkedRecords;
 }

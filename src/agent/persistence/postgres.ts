@@ -127,7 +127,6 @@ export class PostgresPersistence implements AgentPersistence {
         select event_type, event_timestamp, data
         from ${this.table("conversation_events")}
         where conversation_id = $1
-          and event_type = 'turn'
         order by id asc
       `,
       [conversation.id],
@@ -206,6 +205,72 @@ export class PostgresPersistence implements AgentPersistence {
       [this.appName, this.userId, sessionId, toAgentScope(agentId)],
     );
     return rows.length > 0;
+  }
+
+  async forkConversation(
+    sessionId: string,
+    checkpointTurnIndex: number,
+    options?: {
+      agentId?: string;
+      forkSessionId?: string;
+    },
+  ): Promise<{ sessionId: string; copiedTurnCount: number }> {
+    const sourceAgentId = options?.agentId;
+    const sourceConversation = await this.readConversation(sessionId, sourceAgentId);
+    if (!sourceConversation) {
+      throw new Error("conversation_not_found");
+    }
+    if (sourceConversation.inProgress) {
+      throw new Error("conversation_in_progress");
+    }
+    if (
+      !Number.isInteger(checkpointTurnIndex) ||
+      checkpointTurnIndex < 0 ||
+      checkpointTurnIndex > sourceConversation.turns.length
+    ) {
+      throw new Error("checkpoint_index_out_of_range");
+    }
+
+    const forkSessionId = options?.forkSessionId ?? crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+
+    await this.sql.begin(async (tx) => {
+      const sourceRow = await this.findConversation(tx, sessionId, sourceAgentId);
+      if (!sourceRow) {
+        throw new Error("conversation_not_found");
+      }
+      const eventRows = await this.query<ConversationEventRow>(
+        tx,
+        `
+          select event_type, event_timestamp, data, created_at
+          from ${this.table("conversation_events")}
+          where conversation_id = $1
+          order by id asc
+        `,
+        [sourceRow.id],
+      );
+      const forkedRecords = sliceConversationRecordsForCheckpoint(
+        eventRows.map((row) => ({
+          type: row.event_type,
+          data: row.data,
+          timestamp: normalizeTimestamp(row.event_timestamp),
+        })),
+        checkpointTurnIndex,
+      );
+      const forkConversationId = await this.ensureConversation(tx, forkSessionId, sourceConversation.agentId, {
+        title: sourceConversation.title,
+        agentName: sourceConversation.agentName,
+        updatedAt: timestamp,
+      });
+      for (const record of forkedRecords) {
+        await this.insertEvent(tx, forkConversationId, record);
+      }
+    });
+
+    return {
+      sessionId: forkSessionId,
+      copiedTurnCount: checkpointTurnIndex,
+    };
   }
 
   async appendConversationTurn(
@@ -672,4 +737,22 @@ function normalizeTimestamp(value: unknown): string {
     return value.toISOString();
   }
   throw new Error(`Unexpected PostgreSQL timestamp value: ${String(value)}`);
+}
+
+function sliceConversationRecordsForCheckpoint(
+  records: ConversationRecord[],
+  checkpointTurnIndex: number,
+): ConversationRecord[] {
+  const forkedRecords: ConversationRecord[] = [];
+  let copiedTurns = 0;
+  for (const record of records) {
+    if (record.type === "turn" && copiedTurns >= checkpointTurnIndex) {
+      break;
+    }
+    forkedRecords.push(record);
+    if (record.type === "turn") {
+      copiedTurns += 1;
+    }
+  }
+  return forkedRecords;
 }

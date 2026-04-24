@@ -51,6 +51,7 @@ describe("SupabasePersistence", () => {
 async function exercisePersistence(persistence: AgentPersistence): Promise<{
   conversation: Conversation | null;
   summaries: ConversationSummary[];
+  forkedConversation: Conversation | null;
   inputHistory: string[];
   usage: McpUsageSummary | null;
   idempotency: IdempotencyRecord | null;
@@ -135,9 +136,17 @@ async function exercisePersistence(persistence: AgentPersistence): Promise<{
       createdAt: "2026-03-17T00:02:01.000Z",
     });
 
+    await persistence.forkConversation("sess-1", 1, {
+      agentId: "agent-a",
+      forkSessionId: "sess-1-fork",
+    });
+
     return {
       conversation: await persistence.readConversation("sess-1", "agent-a"),
-      summaries: await persistence.listConversationSummaries(),
+      summaries: (await persistence.listConversationSummaries()).sort((left, right) =>
+        left.sessionId.localeCompare(right.sessionId)
+      ),
+      forkedConversation: await persistence.readConversation("sess-1-fork", "agent-a"),
       inputHistory: await persistence.listInputMessageHistory(),
       usage: await persistence.summarizeUsage(),
       idempotency: await persistence.readIdempotencyRecord("idem-1"),

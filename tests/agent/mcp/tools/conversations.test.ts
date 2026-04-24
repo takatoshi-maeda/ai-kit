@@ -6,6 +6,7 @@ import {
   handleConversationsList,
   handleConversationsGet,
   handleConversationsDelete,
+  handleConversationsFork,
 } from "../../../../src/agent/mcp/tools/conversations.js";
 import { toFileSystemAssetRef } from "../../../../src/agent/public-assets/filesystem.js";
 import { JsonlMcpPersistence } from "../../../../src/agent/mcp/jsonl-persistence.js";
@@ -337,6 +338,118 @@ describe("conversations tools", () => {
       expect(parsed.deleted).toBe(false);
       expect(result.structuredContent).toEqual(parsed);
       expect(result.isError).toBe(false);
+    });
+  });
+
+  describe("handleConversationsFork", () => {
+    it("forks a conversation up to the requested checkpoint", async () => {
+      await persistence.appendConversationTurn(
+        "s1",
+        { ...makeTurn("first"), turnId: "turn-1", runId: "run-1", responseId: "resp-1", agentId: "front-desk" },
+        "Test",
+      );
+      await persistence.appendConversationTurn(
+        "s1",
+        { ...makeTurn("second"), turnId: "turn-2", runId: "run-2", responseId: "resp-2", agentId: "front-desk" },
+      );
+
+      const forkResult = await handleConversationsFork(persistence, {
+        sessionId: "s1",
+        checkpointTurnIndex: 1,
+        agentId: "front-desk",
+      });
+      const forkParsed = JSON.parse(forkResult.content[0].text);
+
+      expect(forkParsed.copiedTurnCount).toBe(1);
+      expect(typeof forkParsed.sessionId).toBe("string");
+      expect(forkParsed.sessionId).not.toBe("s1");
+      expect(forkResult.isError).toBe(false);
+
+      const forkedConversation = await handleConversationsGet(persistence, {
+        sessionId: forkParsed.sessionId,
+        agentId: "front-desk",
+      });
+      const forkedParsed = JSON.parse(forkedConversation.content[0].text);
+      expect(forkedParsed.turns).toHaveLength(1);
+      expect(forkedParsed.turns[0].userMessage).toBe("first");
+
+      const sourceConversation = await handleConversationsGet(persistence, {
+        sessionId: "s1",
+        agentId: "front-desk",
+      });
+      const sourceParsed = JSON.parse(sourceConversation.content[0].text);
+      expect(sourceParsed.turns).toHaveLength(2);
+    });
+
+    it("creates an empty fork when checkpointTurnIndex is 0", async () => {
+      await persistence.appendConversationTurn(
+        "s1",
+        { ...makeTurn("first"), turnId: "turn-1", runId: "run-1", agentId: "front-desk" },
+        "Test",
+      );
+
+      const forkResult = await handleConversationsFork(persistence, {
+        sessionId: "s1",
+        checkpointTurnIndex: 0,
+        agentId: "front-desk",
+      });
+      const forkParsed = JSON.parse(forkResult.content[0].text);
+
+      const forkedConversation = await handleConversationsGet(persistence, {
+        sessionId: forkParsed.sessionId,
+        agentId: "front-desk",
+      });
+      const forkedParsed = JSON.parse(forkedConversation.content[0].text);
+      expect(forkedParsed.turns).toEqual([]);
+      expect(forkedParsed.inProgress).toBeNull();
+    });
+
+    it("returns a clear error when the source conversation is not found", async () => {
+      const result = await handleConversationsFork(persistence, {
+        sessionId: "missing",
+        checkpointTurnIndex: 0,
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.error).toBe("Conversation not found");
+      expect(result.isError).toBe(true);
+    });
+
+    it("returns a clear error when the checkpoint index is out of range", async () => {
+      await persistence.appendConversationTurn(
+        "s1",
+        { ...makeTurn("first"), turnId: "turn-1", runId: "run-1", agentId: "front-desk" },
+        "Test",
+      );
+
+      const result = await handleConversationsFork(persistence, {
+        sessionId: "s1",
+        checkpointTurnIndex: 2,
+        agentId: "front-desk",
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.error).toBe("Checkpoint index out of range");
+      expect(result.isError).toBe(true);
+    });
+
+    it("returns a clear error when the source conversation is in progress", async () => {
+      await persistence.appendRunState("s1", {
+        runId: "run-1",
+        turnId: "turn-1",
+        status: "started",
+        startedAt: "2026-03-04T00:00:00.000Z",
+        updatedAt: "2026-03-04T00:01:00.000Z",
+        userMessage: "pending",
+        agentId: "front-desk",
+      });
+
+      const result = await handleConversationsFork(persistence, {
+        sessionId: "s1",
+        checkpointTurnIndex: 0,
+        agentId: "front-desk",
+      });
+      const parsed = JSON.parse(result.content[0].text);
+      expect(parsed.error).toBe("Conversation fork is not allowed while the source conversation is in progress");
+      expect(result.isError).toBe(true);
     });
   });
 });

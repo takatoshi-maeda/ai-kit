@@ -25,6 +25,12 @@ export const ConversationsDeleteParamsSchema = z.object({
   agentId: z.string().optional().describe("Agent ID to scope conversation queries"),
 });
 
+export const ConversationsForkParamsSchema = z.object({
+  sessionId: z.string().describe("The session ID of the conversation to fork"),
+  checkpointTurnIndex: z.number().int().min(0).describe("Copy turns.slice(0, checkpointTurnIndex) into the fork"),
+  agentId: z.string().optional().describe("Agent ID to scope conversation queries"),
+});
+
 export async function handleConversationsList(
   persistence: McpPersistence,
   params: z.infer<typeof ConversationsListParamsSchema>,
@@ -109,6 +115,38 @@ export async function handleConversationsDelete(
     structuredContent: payload,
     isError: false,
   };
+}
+
+export async function handleConversationsFork(
+  persistence: McpPersistence,
+  params: z.infer<typeof ConversationsForkParamsSchema>,
+): Promise<{
+  content: Array<{ type: "text"; text: string }>;
+  structuredContent: { sessionId?: string; copiedTurnCount?: number; error?: string };
+  isError: boolean;
+}> {
+  try {
+    const payload = await persistence.forkConversation(
+      params.sessionId,
+      params.checkpointTurnIndex,
+      { agentId: params.agentId },
+    );
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: payload,
+      isError: false,
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const payload = {
+      error: toForkErrorMessage(message),
+    };
+    return {
+      content: [{ type: "text" as const, text: JSON.stringify(payload, null, 2) }],
+      structuredContent: payload,
+      isError: true,
+    };
+  }
 }
 
 function formatConversationForWire(
@@ -279,4 +317,17 @@ function toPublicAssetUrl(
   }
 
   return null;
+}
+
+function toForkErrorMessage(message: string): string {
+  switch (message) {
+    case "conversation_not_found":
+      return "Conversation not found";
+    case "checkpoint_index_out_of_range":
+      return "Checkpoint index out of range";
+    case "conversation_in_progress":
+      return "Conversation fork is not allowed while the source conversation is in progress";
+    default:
+      return message;
+  }
 }

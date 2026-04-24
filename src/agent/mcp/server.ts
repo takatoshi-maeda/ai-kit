@@ -17,9 +17,11 @@ import {
   ConversationsListParamsSchema,
   ConversationsGetParamsSchema,
   ConversationsDeleteParamsSchema,
+  ConversationsForkParamsSchema,
   handleConversationsList,
   handleConversationsGet,
   handleConversationsDelete,
+  handleConversationsFork,
 } from "./tools/conversations.js";
 import {
   UsageSummaryParamsSchema,
@@ -195,6 +197,22 @@ export function buildMcpServer(options: McpServerOptions): SdkMcpServer {
   }, async (args) => {
     const parsed = ConversationsDeleteParamsSchema.parse(args);
     return handleConversationsDelete(resolveRuntimeServices(
+      persistence,
+      publicAssetStorage,
+      publicAssetsDir,
+    ).persistence, {
+      ...parsed,
+      agentId: resolveConversationAgentId(agentRegistry, parsed.agentId),
+    });
+  });
+
+  const forkShape = extractShape(ConversationsForkParamsSchema);
+  server.registerTool("conversations.fork", {
+    description: "Fork a conversation up to a checkpoint into a new session",
+    inputSchema: forkShape,
+  }, async (args) => {
+    const parsed = ConversationsForkParamsSchema.parse(args);
+    return handleConversationsFork(resolveRuntimeServices(
       persistence,
       publicAssetStorage,
       publicAssetsDir,

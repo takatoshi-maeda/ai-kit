@@ -180,6 +180,14 @@ export interface AgentPersistence {
   readConversation(sessionId: string, agentId?: string): Promise<Conversation | null>;
   listConversationSummaries(limit?: number, agentId?: string): Promise<ConversationSummary[]>;
   deleteConversation(sessionId: string, agentId?: string): Promise<boolean>;
+  forkConversation(
+    sessionId: string,
+    checkpointTurnIndex: number,
+    options?: {
+      agentId?: string;
+      forkSessionId?: string;
+    },
+  ): Promise<{ sessionId: string; copiedTurnCount: number }>;
   appendConversationTurn(
     sessionId: string,
     turn: ConversationTurn,

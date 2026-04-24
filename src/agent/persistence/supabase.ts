@@ -148,7 +148,6 @@ export class SupabasePersistence implements AgentPersistence {
       throw new Error(formatSupabaseError(runStateResult.error));
     }
     const records = asArray<ConversationEventRow>(data)
-      .filter((row) => row.event_type === "turn")
       .map<ConversationRecord>((row) => ({
         type: row.event_type,
         data: row.data,
@@ -211,6 +210,68 @@ export class SupabasePersistence implements AgentPersistence {
       throw new Error(formatSupabaseError(error));
     }
     return asArray<ConversationRow>(data).length > 0;
+  }
+
+  async forkConversation(
+    sessionId: string,
+    checkpointTurnIndex: number,
+    options?: {
+      agentId?: string;
+      forkSessionId?: string;
+    },
+  ): Promise<{ sessionId: string; copiedTurnCount: number }> {
+    const sourceAgentId = options?.agentId;
+    const sourceConversation = await this.readConversation(sessionId, sourceAgentId);
+    if (!sourceConversation) {
+      throw new Error("conversation_not_found");
+    }
+    if (sourceConversation.inProgress) {
+      throw new Error("conversation_in_progress");
+    }
+    if (
+      !Number.isInteger(checkpointTurnIndex) ||
+      checkpointTurnIndex < 0 ||
+      checkpointTurnIndex > sourceConversation.turns.length
+    ) {
+      throw new Error("checkpoint_index_out_of_range");
+    }
+
+    const sourceRow = await this.findConversation(sessionId, sourceAgentId);
+    if (!sourceRow) {
+      throw new Error("conversation_not_found");
+    }
+    const { data, error } = await this.client
+      .from<ConversationEventRow>(this.tableName("conversation_events"))
+      .select("event_type,event_timestamp,data")
+      .eq("conversation_id", sourceRow.id)
+      .order("id", { ascending: true });
+    if (error) {
+      throw new Error(formatSupabaseError(error));
+    }
+
+    const forkSessionId = options?.forkSessionId ?? crypto.randomUUID();
+    const timestamp = new Date().toISOString();
+    const forkedRecords = sliceConversationRecordsForCheckpoint(
+      asArray<ConversationEventRow>(data).map((row) => ({
+        type: row.event_type,
+        data: row.data,
+        timestamp: row.event_timestamp,
+      })),
+      checkpointTurnIndex,
+    );
+    const forkConversationId = await this.ensureConversation(forkSessionId, sourceConversation.agentId, {
+      title: sourceConversation.title,
+      agentName: sourceConversation.agentName,
+      updatedAt: timestamp,
+    });
+    for (const record of forkedRecords) {
+      await this.insertEvent(forkConversationId, record);
+    }
+
+    return {
+      sessionId: forkSessionId,
+      copiedTurnCount: checkpointTurnIndex,
+    };
   }
 
   async appendConversationTurn(
@@ -608,4 +669,22 @@ function toRunState(row?: ConversationRunStateRow): RunState | undefined {
     agentId: row.agent_id ?? undefined,
     agentName: row.agent_name ?? undefined,
   };
+}
+
+function sliceConversationRecordsForCheckpoint(
+  records: ConversationRecord[],
+  checkpointTurnIndex: number,
+): ConversationRecord[] {
+  const forkedRecords: ConversationRecord[] = [];
+  let copiedTurns = 0;
+  for (const record of records) {
+    if (record.type === "turn" && copiedTurns >= checkpointTurnIndex) {
+      break;
+    }
+    forkedRecords.push(record);
+    if (record.type === "turn") {
+      copiedTurns += 1;
+    }
+  }
+  return forkedRecords;
 }

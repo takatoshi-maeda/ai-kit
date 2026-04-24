@@ -35,6 +35,7 @@ function stubPersistence(): McpPersistence {
     readConversation: vi.fn(async () => null),
     listConversationSummaries: vi.fn(async () => []),
     deleteConversation: vi.fn(async () => false),
+    forkConversation: vi.fn(async () => ({ sessionId: "forked-session", copiedTurnCount: 0 })),
     appendConversationTurn: vi.fn(async () => {}),
     appendSessionState: vi.fn(async () => {}),
     appendRunState: vi.fn(async () => {}),

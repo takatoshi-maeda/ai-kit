@@ -115,6 +115,11 @@ async function exerciseBackend(kind: "filesystem" | "supabase") {
     sessionId: "session-image",
     agentId: "alpha",
   });
+  const fork = await callTool(app, baseUrl, "alpha", "conversations.fork", {
+    sessionId: "session-image",
+    agentId: "alpha",
+    checkpointTurnIndex: 0,
+  });
   const usage = await callTool(app, baseUrl, "alpha", "usage.summary", {});
   const health = await callTool(app, baseUrl, "alpha", "health.check", {});
 
@@ -153,6 +158,7 @@ async function exerciseBackend(kind: "filesystem" | "supabase") {
     repeatedRun,
     list,
     get,
+    fork,
     usage,
     health,
     status,
