@@ -266,6 +266,7 @@ export async function handleAgentRun(
     throw new Error("Either message or input must be provided");
   }
 
+  const entry = deps.registry.get(agentId);
   const existingConversation = await deps.persistence.readConversation(sessionId, agentId);
   const workingDir = await resolveAgentWorkingDir(
     deps.registry,
@@ -282,7 +283,11 @@ export async function handleAgentRun(
     throw new Error("working_dir_changed_requires_new_session");
   }
 
-  const availableSkills = workingDir ? await listSkills(workingDir) : [];
+  const availableSkills = workingDir
+    ? await listSkills(workingDir, {
+        builtInSkillRoots: entry.skills?.builtInSkillRoots,
+      })
+    : [];
   const mentionedSkillNames = collectSkillMentionNames(resolvedUserInput);
   const activeSkillNames = [
     ...(persistedSkillsState?.activeSkillNames ?? []),
@@ -341,7 +346,6 @@ export async function handleAgentRun(
   }
 
   // Record run state as started
-  const entry = deps.registry.get(agentId);
   const resolvedRuntime = resolveAgentRuntime(
     entry.runtimePolicy,
     requestedRuntime,

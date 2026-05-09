@@ -13,6 +13,26 @@ async function writeSkill(
   relativeSkillDir = name,
 ): Promise<void> {
   const skillDir = path.join(filesRoot, ".skills", relativeSkillDir);
+  await writeSkillFile(skillDir, name, description, body);
+}
+
+async function writeBuiltInSkill(
+  root: string,
+  name: string,
+  description: string,
+  body: string,
+  relativeSkillDir = name,
+): Promise<void> {
+  const skillDir = path.join(root, relativeSkillDir);
+  await writeSkillFile(skillDir, name, description, body);
+}
+
+async function writeSkillFile(
+  skillDir: string,
+  name: string,
+  description: string,
+  body: string,
+): Promise<void> {
   await fs.mkdir(skillDir, { recursive: true });
   await fs.writeFile(path.join(skillDir, "SKILL.md"), [
     "---",
@@ -67,6 +87,48 @@ describe("skill discovery", () => {
       name: "skill-creator",
       description: "Workspace override",
       directory: path.join(tmpDir, ".skills", "skill-creator"),
+    });
+  });
+
+  it("includes agent built-in skills between bundled globals and workspace skills", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "ai-kit-skills-precedence-"));
+    const builtInRoot = await mkdtemp(path.join(os.tmpdir(), "ai-kit-built-in-skills-"));
+    await writeBuiltInSkill(
+      builtInRoot,
+      "research-plan",
+      "Built-in research plan",
+      "Plan the investigation.",
+    );
+    await writeBuiltInSkill(
+      builtInRoot,
+      "focus",
+      "Built-in focus",
+      "Use the built-in workflow.",
+    );
+    await writeSkill(
+      tmpDir,
+      "focus",
+      "Workspace focus",
+      "Use the workspace workflow.",
+    );
+
+    const skills = await listSkills(tmpDir, {
+      builtInSkillRoots: [builtInRoot],
+    });
+
+    expect(skills.find((skill) => skill.name === "research-plan")).toMatchObject({
+      name: "research-plan",
+      description: "Built-in research plan",
+      directory: path.join(builtInRoot, "research-plan"),
+    });
+    expect(skills.find((skill) => skill.name === "skill-creator")).toMatchObject({
+      name: "skill-creator",
+      mention: "$skill-creator",
+    });
+    expect(skills.find((skill) => skill.name === "focus")).toMatchObject({
+      name: "focus",
+      description: "Workspace focus",
+      directory: path.join(tmpDir, ".skills", "focus"),
     });
   });
 });

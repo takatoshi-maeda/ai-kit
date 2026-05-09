@@ -24,6 +24,7 @@ export async function handleSkillsList(
   isError: boolean;
 }> {
   const agentId = deps.registry.resolveAgentId(params.agentId);
+  const entry = deps.registry.get(agentId);
   const workingDir = await resolveAgentWorkingDir(
     deps.registry,
     agentId,
@@ -41,7 +42,9 @@ export async function handleSkillsList(
   }
 
   const payload = {
-    items: (await listSkills(workingDir)).map((skill) => ({
+    items: (await listSkills(workingDir, {
+      builtInSkillRoots: entry.skills?.builtInSkillRoots,
+    })).map((skill) => ({
       name: skill.name,
       description: skill.description,
       mention: skill.mention,

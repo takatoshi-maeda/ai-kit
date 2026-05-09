@@ -21,6 +21,10 @@ export interface DiscoveredSkill {
   agentRuntime?: SkillAgentRuntime;
 }
 
+export interface ListSkillsOptions {
+  builtInSkillRoots?: string[];
+}
+
 interface ParsedSkillFile {
   name: string;
   description: string;
@@ -33,15 +37,22 @@ const bundledSkillsRoot = path.resolve(
   "../../resources/skills",
 );
 
-export async function listSkills(workingDir: string): Promise<DiscoveredSkill[]> {
+export async function listSkills(
+  workingDir: string,
+  options: ListSkillsOptions = {},
+): Promise<DiscoveredSkill[]> {
   const workspaceSkillsRoot = path.join(path.resolve(workingDir), ".skills");
-  const [bundledSkills, workspaceSkills] = await Promise.all([
+  const [bundledSkills, builtInSkillGroups, workspaceSkills] = await Promise.all([
     listSkillsFromRoot(bundledSkillsRoot),
+    Promise.all((options.builtInSkillRoots ?? []).map((root) => listSkillsFromRoot(root))),
     listSkillsFromRoot(workspaceSkillsRoot),
   ]);
 
   const merged = new Map<string, DiscoveredSkill>();
   for (const skill of bundledSkills) {
+    merged.set(skill.name, skill);
+  }
+  for (const skill of builtInSkillGroups.flat()) {
     merged.set(skill.name, skill);
   }
   for (const skill of workspaceSkills) {

@@ -15,7 +15,7 @@ export {
   resolveSkillsByName,
   stripResolvedSkillMentions,
 } from "./skills.js";
-export type { DiscoveredSkill } from "./skills.js";
+export type { DiscoveredSkill, ListSkillsOptions } from "./skills.js";
 export {
   runBeforeTurnHooks,
   runAfterTurnHooks,

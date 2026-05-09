@@ -57,6 +57,7 @@ export interface AgentSkillResolverContext {
 }
 
 export interface AgentSkillsOptions {
+  builtInSkillRoots?: string[];
   resolveWorkingDir: (
     context: AgentSkillResolverContext,
   ) => string | Promise<string>;
