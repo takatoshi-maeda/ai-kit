@@ -31,6 +31,25 @@ describe("MarkdownPromptLoader", () => {
       );
     });
 
+    it("prefers a model-specific markdown file when a model is provided", async () => {
+      await writeMarkdown("system", "Default prompt");
+      await writeMarkdown("system.gpt-5.5", "GPT-5.5 prompt");
+      const loader = new MarkdownPromptLoader({ baseDir: tmpDir });
+
+      expect(loader.getTemplate("system", { model: "gpt-5.5" })).toBe(
+        "GPT-5.5 prompt",
+      );
+    });
+
+    it("falls back to the default markdown file when a model-specific file is missing", async () => {
+      await writeMarkdown("system", "Default prompt");
+      const loader = new MarkdownPromptLoader({ baseDir: tmpDir });
+
+      expect(loader.getTemplate("system", { model: "gpt-5.2" })).toBe(
+        "Default prompt",
+      );
+    });
+
     it("throws on non-existent file", () => {
       const loader = new MarkdownPromptLoader({ baseDir: tmpDir });
       expect(() => loader.getTemplate("missing")).toThrow();
@@ -57,6 +76,25 @@ describe("MarkdownPromptLoader", () => {
       await writeMarkdown("raw", "No vars ${here}");
       const loader = new MarkdownPromptLoader({ baseDir: tmpDir });
       expect(loader.format("raw")).toBe("No vars ${here}");
+    });
+
+    it("renders placeholders from model-specific markdown files", async () => {
+      await writeMarkdown("greet", "Hello, ${name}.");
+      await writeMarkdown("greet.gpt-5.5", "Optimized hello, ${name}.");
+      const loader = new MarkdownPromptLoader({ baseDir: tmpDir });
+
+      expect(
+        loader.format("greet", { name: "Alice" }, { model: "gpt-5.5" }),
+      ).toBe("Optimized hello, Alice.");
+    });
+
+    it("renders placeholders after falling back to the default markdown file", async () => {
+      await writeMarkdown("greet", "Hello, ${name}.");
+      const loader = new MarkdownPromptLoader({ baseDir: tmpDir });
+
+      expect(
+        loader.format("greet", { name: "Alice" }, { model: "gpt-5.2" }),
+      ).toBe("Hello, Alice.");
     });
   });
 

@@ -220,7 +220,11 @@ export type {
 } from "./speech/index.js";
 
 // Prompt
-export type { TemplateEngine, PromptLoaderOptions } from "./prompt/index.js";
+export type {
+  TemplateEngine,
+  PromptLoaderOptions,
+  MarkdownPromptLookupOptions,
+} from "./prompt/index.js";
 export { PromptLoader, MarkdownPromptLoader } from "./prompt/index.js";
 
 // MCP
