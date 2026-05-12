@@ -21,6 +21,34 @@ function makeUsage(overrides: Partial<LLMUsage> = {}): LLMUsage {
 }
 
 describe("withComputedUsageCost", () => {
+  it("computes GPT-5.5 cost using current OpenAI pricing", () => {
+    const usage = withComputedUsageCost("openai", "gpt-5.5", makeUsage({
+      inputTokens: 200_000,
+      cachedInputTokens: 20_000,
+      outputTokens: 100_000,
+      totalTokens: 300_000,
+    }));
+
+    expect(usage.inputCost).toBeCloseTo(0.9);
+    expect(usage.cacheCost).toBeCloseTo(0.01);
+    expect(usage.outputCost).toBeCloseTo(3);
+    expect(usage.totalCost).toBeCloseTo(3.91);
+  });
+
+  it("applies the long-context uplift to GPT-5.5 snapshots too", () => {
+    const usage = withComputedUsageCost("openai", "gpt-5.5-2026-05-11", makeUsage({
+      inputTokens: 300_000,
+      cachedInputTokens: 100_000,
+      outputTokens: 100_000,
+      totalTokens: 400_000,
+    }));
+
+    expect(usage.inputCost).toBeCloseTo(2);
+    expect(usage.cacheCost).toBeCloseTo(0.05);
+    expect(usage.outputCost).toBeCloseTo(4.5);
+    expect(usage.totalCost).toBeCloseTo(6.55);
+  });
+
   it("computes OpenAI cost using cached and uncached token rates", () => {
     const usage = withComputedUsageCost("openai", "gpt-5.4", makeUsage({
       inputTokens: 1_000_000,

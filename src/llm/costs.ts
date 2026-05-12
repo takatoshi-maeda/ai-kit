@@ -181,14 +181,18 @@ function getSessionPriceMultiplier(
   model: string,
   usage: LLMUsage,
 ): { input: number; output: number } {
-  if (provider === "openai" && isGpt54LongContextSession(model, usage.inputTokens)) {
+  if (provider === "openai" && isLongContextPricedGpt5Session(model, usage.inputTokens)) {
     return { input: 2, output: 1.5 };
   }
   return { input: 1, output: 1 };
 }
 
-function isGpt54LongContextSession(model: string, inputTokens: number): boolean {
-  return normalizeModelId(model) === "gpt-5.4" && inputTokens > 272_000;
+function isLongContextPricedGpt5Session(model: string, inputTokens: number): boolean {
+  const normalizedModel = normalizeModelId(model);
+  return (
+    (normalizedModel === "gpt-5.5" || normalizedModel === "gpt-5.4")
+    && inputTokens > 272_000
+  );
 }
 
 function normalizeModelId(model: string): string {
