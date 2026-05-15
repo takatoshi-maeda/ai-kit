@@ -88,6 +88,50 @@ describe("ToolExecutor", () => {
 
       expect(JSON.parse(result.content)).toEqual({ key: "value" });
     });
+
+    it("normalizes tool result envelopes with output content", async () => {
+      const tool = defineTool({
+        name: "doc",
+        description: "Returns document",
+        parameters: z.object({}),
+        execute: async () => ({
+          content: "summary",
+          structuredContent: { id: "doc-1" },
+          outputContent: [
+            { type: "text" as const, text: "summary" },
+            { type: "file" as const, fileId: "file-1", filename: "doc.pdf" },
+          ],
+        }),
+      });
+      const executor = new ToolExecutor([tool]);
+
+      const result = await executor.execute({
+        id: "call-1",
+        name: "doc",
+        arguments: {},
+        provider: "openai",
+      });
+
+      expect(result.content).toBe("summary");
+      expect(result.structuredContent).toEqual({ id: "doc-1" });
+      expect(result.outputContent).toEqual([
+        { type: "text", text: "summary" },
+        { type: "file", fileId: "file-1", filename: "doc.pdf" },
+      ]);
+      expect(result.extra?.providerRaw).toEqual({
+        provider: "openai",
+        inputItems: [
+          {
+            type: "function_call_output",
+            call_id: "call-1",
+            output: [
+              { type: "input_text", text: "summary" },
+              { type: "input_file", file_id: "file-1" },
+            ],
+          },
+        ],
+      });
+    });
   });
 
   describe("executeAll", () => {

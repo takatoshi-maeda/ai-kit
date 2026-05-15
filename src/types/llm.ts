@@ -1,5 +1,11 @@
 import type { ZodType } from "zod";
-import type { AgentTool, LLMToolCall, ProviderRawTransport, ToolExecutionKind } from "./tool.js";
+import type {
+  AgentTool,
+  LLMToolCall,
+  ProviderRawTransport,
+  ToolExecutionKind,
+  ToolResultOutputContent,
+} from "./tool.js";
 
 export type ImageSource =
   | { type: "base64"; mediaType: string; data: string }
@@ -43,6 +49,8 @@ export interface LLMMessage {
       };
       result?: {
         content: string;
+        structuredContent?: unknown;
+        outputContent?: ToolResultOutputContent[];
         isError?: boolean;
         extra?: Record<string, unknown>;
       };

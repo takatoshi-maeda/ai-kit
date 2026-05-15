@@ -6,6 +6,8 @@ import {
   type LLMToolCall,
   type LLMToolResult,
   type ToolExecutionOptions,
+  type ToolResultEnvelope,
+  type ToolResultOutputContent,
 } from "../../types/tool.js";
 
 export class ToolExecutor {
@@ -37,13 +39,20 @@ export class ToolExecutor {
     try {
       const parsed = tool.parameters.parse(toolCall.arguments);
       const result = await tool.execute(parsed, options);
+      const envelope = normalizeToolResultEnvelope(result);
+      const content = envelope
+        ? envelope.content ?? JSON.stringify(envelope.structuredContent ?? {})
+        : typeof result === "string" ? result : JSON.stringify(result);
       return {
         toolCallId: toolCall.id,
-        content: typeof result === "string" ? result : JSON.stringify(result),
+        content,
+        structuredContent: envelope?.structuredContent,
+        outputContent: envelope?.outputContent,
         extra: {
           providerRaw: buildFunctionToolResultProviderRaw(
             toolCall,
-            typeof result === "string" ? result : JSON.stringify(result),
+            content,
+            envelope?.outputContent,
           ),
         },
       };
@@ -79,6 +88,7 @@ export class ToolExecutor {
 function buildFunctionToolResultProviderRaw(
   toolCall: LLMToolCall,
   output: string,
+  outputContent?: ToolResultOutputContent[],
 ) {
   if (toolCall.executionKind === "provider_native" || toolCall.provider !== "openai") {
     return undefined;
@@ -90,8 +100,35 @@ function buildFunctionToolResultProviderRaw(
       {
         type: "function_call_output",
         call_id: toolCall.id,
-        output,
+        output: outputContent ? convertOutputContent(outputContent) : output,
       },
     ],
   };
+}
+
+function normalizeToolResultEnvelope(result: unknown): ToolResultEnvelope | undefined {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    return undefined;
+  }
+
+  const candidate = result as ToolResultEnvelope;
+  if (
+    "structuredContent" in candidate ||
+    "outputContent" in candidate
+  ) {
+    return candidate;
+  }
+  return undefined;
+}
+
+function convertOutputContent(outputContent: ToolResultOutputContent[]): unknown[] {
+  return outputContent.map((part) => {
+    if (part.type === "text") {
+      return { type: "input_text", text: part.text };
+    }
+    return {
+      type: "input_file",
+      file_id: part.fileId,
+    };
+  });
 }

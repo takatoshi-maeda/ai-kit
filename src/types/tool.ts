@@ -63,8 +63,27 @@ export interface LLMToolCall {
 export interface LLMToolResult {
   toolCallId: string;
   content: string;
+  structuredContent?: unknown;
+  outputContent?: ToolResultOutputContent[];
   isError?: boolean;
   extra?: Record<string, unknown>;
+}
+
+export type ToolResultOutputContent =
+  | {
+      type: "text";
+      text: string;
+    }
+  | {
+      type: "file";
+      fileId: string;
+      filename?: string;
+    };
+
+export interface ToolResultEnvelope {
+  content?: string;
+  structuredContent?: unknown;
+  outputContent?: ToolResultOutputContent[];
 }
 
 export function isProviderNativeTool(tool: AgentTool): tool is ProviderNativeTool {

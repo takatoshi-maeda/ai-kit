@@ -302,6 +302,110 @@ describe("OpenAIClient", () => {
       expect(input[1].call_id).toBe("fc-1");
     });
 
+    it("preserves file content arrays in function_call_output provider raw items", async () => {
+      mockCreate.mockResolvedValue({
+        id: "resp-file-output",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "ok" }],
+          },
+        ],
+        status: "completed",
+      });
+
+      const client = makeClient();
+      await client.invoke({
+        messages: [
+          {
+            role: "tool",
+            content: "summary",
+            toolCallId: "fc-1",
+            extra: {
+              providerRaw: {
+                provider: "openai",
+                inputItems: [
+                  {
+                    type: "function_call_output",
+                    call_id: "fc-1",
+                    output: [
+                      { type: "input_text", text: "summary" },
+                      { type: "input_file", file_id: "file-1" },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.input).toEqual([
+        {
+          type: "function_call_output",
+          call_id: "fc-1",
+          output: [
+            { type: "input_text", text: "summary" },
+            { type: "input_file", file_id: "file-1" },
+          ],
+        },
+      ]);
+    });
+
+    it("keeps file content array outputs on previous_response_id follow-up turns", async () => {
+      mockCreate.mockResolvedValue({
+        id: "resp-file-output-followup",
+        output: [
+          {
+            type: "message",
+            content: [{ type: "output_text", text: "ok" }],
+          },
+        ],
+        status: "completed",
+      });
+
+      const client = makeClient();
+      await client.invoke({
+        previousResponseId: "resp-prev-1",
+        messages: [
+          {
+            role: "tool",
+            content: "summary",
+            toolCallId: "fc-1",
+            extra: {
+              providerRaw: {
+                provider: "openai",
+                inputItems: [
+                  { type: "function_call", call_id: "fc-1", name: "doc", arguments: "{}" },
+                  {
+                    type: "function_call_output",
+                    call_id: "fc-1",
+                    output: [
+                      { type: "input_text", text: "summary" },
+                      { type: "input_file", file_id: "file-1" },
+                    ],
+                  },
+                ],
+              },
+            },
+          },
+        ],
+      });
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.input).toEqual([
+        {
+          type: "function_call_output",
+          call_id: "fc-1",
+          output: [
+            { type: "input_text", text: "summary" },
+            { type: "input_file", file_id: "file-1" },
+          ],
+        },
+      ]);
+    });
+
     it("reuses providerRaw input items for native tool follow-up turns", async () => {
       mockCreate.mockResolvedValue({
         id: "resp-provider-raw",

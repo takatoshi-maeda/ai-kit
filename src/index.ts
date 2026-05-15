@@ -26,6 +26,8 @@ export type {
   ToolDefinition,
   LLMToolCall,
   LLMToolResult,
+  ToolResultOutputContent,
+  ToolResultEnvelope,
   ToolExecutionKind,
   ProviderNativeTool,
   OpenAINativeShellTool,

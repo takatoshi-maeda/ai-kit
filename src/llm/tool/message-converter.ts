@@ -39,6 +39,8 @@ export function toolCallsToMessages(
           },
           result: {
             content: tc.result.content,
+            structuredContent: tc.result.structuredContent,
+            outputContent: tc.result.outputContent,
             isError: tc.result.isError,
             extra: tc.result.extra,
           },
