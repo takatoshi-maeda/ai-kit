@@ -467,6 +467,7 @@ describe("ConversationalAgent", () => {
         client,
         instructions: "Use tools.",
         tools: [failingTool],
+        toolErrorBehavior: "continue",
       });
 
       const agentResult = await agent.invoke("Read the readme");
@@ -493,6 +494,54 @@ describe("ConversationalAgent", () => {
             },
           ],
         },
+      });
+    });
+
+    it("throws after a tool failure by default", async () => {
+      const failingTool = defineTool({
+        name: "read_file",
+        description: "Read a file",
+        parameters: z.object({ path: z.string() }),
+        execute: async () => {
+          throw new Error("File not found: README.md");
+        },
+      });
+
+      const toolCallResult = makeResult({
+        toolCalls: [{ id: "tc-1", name: "read_file", arguments: { path: "README.md" }, provider: "openai" }],
+      });
+      const client: LLMClient = {
+        model: "test-model",
+        provider: "openai",
+        capabilities: defaultCapabilities,
+        async invoke() {
+          throw new Error("invoke should not be called");
+        },
+        async *stream() {
+          for (const event of makeStreamEvents(toolCallResult)) {
+            yield event;
+          }
+        },
+        estimateTokens() {
+          return 10;
+        },
+      };
+      const context = new AgentContextImpl({ history: stubHistory() });
+
+      const agent = new ConversationalAgent({
+        context,
+        client,
+        instructions: "Use tools.",
+        tools: [failingTool],
+      });
+
+      await expect(agent.invoke("Read the readme")).rejects.toThrow(
+        'Tool "read_file" failed: Tool "read_file" failed: File not found: README.md',
+      );
+      expect(context.toolCallResults).toHaveLength(1);
+      expect(context.toolCallResults[0]?.result).toMatchObject({
+        isError: true,
+        content: 'Tool "read_file" failed: File not found: README.md',
       });
     });
 

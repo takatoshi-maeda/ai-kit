@@ -566,6 +566,10 @@ export class ConversationalAgent {
         toolCall,
         result,
       });
+
+      if (result.isError && this.options.toolErrorBehavior !== "continue") {
+        throw new Error(`Tool "${toolCall.name}" failed: ${result.content}`);
+      }
     }
     return toolCalls;
   }

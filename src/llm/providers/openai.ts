@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import { zodToJsonSchema } from "zod-to-json-schema";
 import type {
   LLMCallOptions,
   LLMChatInput,
@@ -493,7 +494,6 @@ export class OpenAIClient implements LLMClient {
       return { format: { type: "text" } };
     }
 
-    const { zodToJsonSchema } = require("zod-to-json-schema") as typeof import("zod-to-json-schema");
     const schema = zodToJsonSchema(format.schema, { $refStrategy: "none" }) as Record<string, unknown>;
     const { $schema, ...rest } = schema;
 

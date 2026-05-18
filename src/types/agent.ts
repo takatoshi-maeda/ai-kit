@@ -45,6 +45,11 @@ export interface AgentOptions {
   memory?: AgentMemory;
   maxTurns?: number;
   nativeToolRuntime?: NativeToolRuntime;
+  /**
+   * Controls how agent runs handle tool execution errors.
+   * Defaults to "throw" so failed tools fail the run unless callers opt in to model-visible recovery.
+   */
+  toolErrorBehavior?: "continue" | "throw";
 }
 
 export interface AgentInvocationOptions {
