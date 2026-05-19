@@ -54,7 +54,7 @@ export async function executeOpenAIApplyPatchToolCall(
     let output: string;
     switch (operation.type) {
       case "create_file": {
-        const content = applyDiff("", operation.diff, "create");
+        const content = normalizeCreateFileDiff(operation.diff);
         await fs.mkdir(path.dirname(absolutePath), { recursive: true });
         await fs.writeFile(absolutePath, content, "utf8");
         output = `Created ${operation.path}`;
@@ -404,6 +404,18 @@ export function applyDiff(
 
   output.push(...normalizedCurrent.slice(cursor));
   return joinLines(output, currentContent.endsWith("\n") || diff.endsWith("\n"));
+}
+
+function normalizeCreateFileDiff(diff: string): string {
+  const normalized = diff.replace(/\r\n/g, "\n");
+  const lines = normalized.split("\n");
+  const contentLines = normalized.endsWith("\n") ? lines.slice(0, -1) : lines;
+
+  if (contentLines.length > 0 && contentLines.every((line) => line.startsWith("+"))) {
+    return joinLines(contentLines.map((line) => line.slice(1)), normalized.endsWith("\n"));
+  }
+
+  return applyDiff("", diff, "create");
 }
 
 function collectHunks(lines: string[]): Array<{
