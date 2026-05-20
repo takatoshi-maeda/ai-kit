@@ -11,6 +11,10 @@ export interface ToolDefinition<
     params: z.infer<TParams>,
     options?: ToolExecutionOptions,
   ) => Promise<TResult>;
+  artifacts?: (
+    result: TResult,
+    params: z.infer<TParams>,
+  ) => AgentArtifact[] | undefined;
 }
 
 export interface ToolExecutionOptions {
@@ -65,6 +69,7 @@ export interface LLMToolResult {
   content: string;
   structuredContent?: unknown;
   outputContent?: ToolResultOutputContent[];
+  artifacts?: AgentArtifact[];
   isError?: boolean;
   extra?: Record<string, unknown>;
 }
@@ -84,7 +89,25 @@ export interface ToolResultEnvelope {
   content?: string;
   structuredContent?: unknown;
   outputContent?: ToolResultOutputContent[];
+  artifacts?: AgentArtifact[];
 }
+
+export type AgentArtifact =
+  | {
+      type: "file";
+      artifactId: string;
+      path?: string;
+      text?: string;
+      contentType?: string;
+      [key: string]: unknown;
+    }
+  | {
+      type: "data";
+      artifactId: string;
+      dataType: string;
+      data: Record<string, unknown>;
+      [key: string]: unknown;
+    };
 
 export function isProviderNativeTool(tool: AgentTool): tool is ProviderNativeTool {
   return (tool as ProviderNativeTool).kind === "provider_native";

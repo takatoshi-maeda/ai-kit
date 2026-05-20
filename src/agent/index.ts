@@ -85,6 +85,7 @@ export type {
   AgentSessionState,
   AgentSkillsSessionState,
   AgentPersistence,
+  AgentArtifact,
   FileSystemBackend,
   PostgresBackend,
   McpPersistence,

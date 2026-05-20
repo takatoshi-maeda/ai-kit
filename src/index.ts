@@ -26,6 +26,7 @@ export type {
   ToolDefinition,
   LLMToolCall,
   LLMToolResult,
+  AgentArtifact,
   ToolResultOutputContent,
   ToolResultEnvelope,
   ToolExecutionKind,

@@ -3,7 +3,7 @@ import type { AuthContext } from "../../../auth/index.js";
 import { isAbortError } from "../../errors.js";
 import type { AgentRegistry } from "../agent-registry.js";
 import type { ActiveRunRegistry } from "../active-run-registry.js";
-import type { McpPersistence, ConversationTurn, TimelineItem } from "../persistence.js";
+import type { AgentArtifact, McpPersistence, ConversationTurn, TimelineItem } from "../persistence.js";
 import { AgentContextImpl } from "../../context.js";
 import { InMemoryHistory } from "../../conversation/memory-history.js";
 import {
@@ -132,6 +132,7 @@ export interface AgentRunResult {
   status: "success" | "error" | "cancelled";
   responseId?: string;
   message: string;
+  artifacts?: AgentArtifact[];
   agentId?: string;
   idempotencyKey?: string;
   errorMessage?: string;
@@ -352,6 +353,7 @@ export async function handleAgentRun(
   );
   const startedAt = new Date().toISOString();
   const runTimeline: TimelineItem[] = [];
+  const runArtifacts = new Map<string, AgentArtifact>();
   const toolCallState = new Map<string, { index: number; argumentsText: string }>();
   let partialAssistantMessage = "";
   await deps.persistence.appendRunState(sessionId, {
@@ -451,6 +453,7 @@ export async function handleAgentRun(
               partialAssistantMessage += delta;
             },
           );
+          upsertArtifacts(runArtifacts, extractArtifactsFromStreamEvent(event));
           await forwardStreamEvent(event, deps.sendNotification, textPartState);
           if (timelineChanged || event.type === "response.completed") {
             await deps.persistence.appendRunState(sessionId, {
@@ -463,6 +466,7 @@ export async function handleAgentRun(
               userContent: userInput,
               assistantMessage: partialAssistantMessage || undefined,
               timeline: cloneTimeline(runTimeline),
+              artifacts: runArtifacts.size > 0 ? [...runArtifacts.values()] : undefined,
               metadata: {
                 usageCostSession: getUsageCostSessionMetadata(context),
                 ...(workingDir
@@ -496,6 +500,7 @@ export async function handleAgentRun(
         status: "success",
         responseId: agentResult.responseId ?? undefined,
         message: agentResult.content ?? "",
+        artifacts: [...runArtifacts.values()],
         agentId,
         idempotencyKey,
         runtime: resolvedRuntime,
@@ -534,6 +539,7 @@ export async function handleAgentRun(
         status: "success",
         responseId: agentResult.responseId ?? undefined,
         message: agentResult.content ?? "",
+        artifacts: collectArtifactsFromToolCalls(agentResult.toolCalls),
         agentId,
         idempotencyKey,
         runtime: resolvedRuntime,
@@ -560,6 +566,7 @@ export async function handleAgentRun(
       responseId: result.responseId,
       status: "success",
       timeline: runTimeline.length > 0 ? finalizeTimeline(runTimeline) : undefined,
+      artifacts: result.artifacts && result.artifacts.length > 0 ? result.artifacts : undefined,
       agentId,
       runtime: resolvedRuntime,
     };
@@ -588,6 +595,7 @@ export async function handleAgentRun(
       turnId,
       status: cancelled ? "cancelled" : "error",
       message: cancelled ? partialAssistantMessage : "",
+      artifacts: [...runArtifacts.values()],
       agentId,
       idempotencyKey,
       errorMessage: cancelled ? undefined : errorMessage,
@@ -608,6 +616,7 @@ export async function handleAgentRun(
       timeline: runTimeline.length > 0
         ? (cancelled ? cloneTimeline(runTimeline) : finalizeTimeline(runTimeline))
         : undefined,
+      artifacts: runArtifacts.size > 0 ? [...runArtifacts.values()] : undefined,
       agentId,
       runtime: resolvedRuntime,
     };
@@ -766,6 +775,20 @@ async function forwardStreamEvent(
         status: event.isError ? "failed" : "completed",
         errorMessage: event.isError ? event.content : undefined,
       });
+      for (const artifact of event.artifacts ?? []) {
+        await sendNotification("agent/stream-response", {
+          type: "agent.output_item.added",
+          itemId: artifact.artifactId,
+          item: artifact,
+          content_type: "artifact",
+        });
+        await sendNotification("agent/stream-response", {
+          type: "agent.output_item.done",
+          itemId: artifact.artifactId,
+          item: artifact,
+          content_type: "artifact",
+        });
+      }
       break;
   }
 }
@@ -892,6 +915,9 @@ function applyStreamEventToTimeline(
           errorMessage: event.isError ? event.content : undefined,
         });
       }
+      for (const artifact of event.artifacts ?? []) {
+        upsertArtifactTimelineItem(timeline, artifact.artifactId, artifact, "completed");
+      }
       return true;
     }
     case "text.delta": {
@@ -1013,6 +1039,59 @@ function findArtifactTimelineItem(
   return undefined;
 }
 
+function upsertArtifactTimelineItem(
+  timeline: TimelineItem[],
+  itemId: string,
+  artifact: AgentArtifact,
+  status: "running" | "completed",
+): void {
+  const existing = findArtifactTimelineItem(timeline, itemId);
+  if (existing) {
+    existing.status = status;
+    existing.item = artifact;
+    if (artifact.type === "file" && existing.path === undefined && typeof artifact.path === "string") {
+      existing.path = artifact.path;
+    }
+    return;
+  }
+  timeline.push({
+    kind: "artifact",
+    id: itemId,
+    text: artifact.type === "file" && typeof artifact.text === "string" ? artifact.text : "",
+    path: artifact.type === "file" && typeof artifact.path === "string" ? artifact.path : undefined,
+    item: artifact,
+    contentType: "artifact",
+    status,
+  });
+}
+
+function toAgentArtifactOrRecord(
+  itemId: string,
+  item: Record<string, unknown>,
+): AgentArtifact | Record<string, unknown> {
+  const artifactId = typeof item.artifactId === "string" ? item.artifactId : itemId;
+  if (item.type === "data" && typeof item.dataType === "string" && isRecord(item.data)) {
+    return {
+      ...item,
+      type: "data",
+      artifactId,
+      dataType: item.dataType,
+      data: item.data,
+    };
+  }
+  if (item.type === "file" || typeof item.path === "string") {
+    return {
+      ...item,
+      type: "file",
+      artifactId,
+      path: typeof item.path === "string" ? item.path : undefined,
+      text: typeof item.text === "string" ? item.text : undefined,
+      contentType: typeof item.contentType === "string" ? item.contentType : undefined,
+    };
+  }
+  return item;
+}
+
 function extractArtifactPath(item: Record<string, unknown>): string | undefined {
   return typeof item.path === "string" && item.path.length > 0
     ? item.path
@@ -1071,6 +1150,7 @@ function toAgentRunWireResult(
   const runtime = toResolvedRuntimeWireValue(
     source.runtime as ResolvedAgentRuntime | undefined,
   );
+  const artifacts = normalizeArtifacts(source.artifacts);
 
   return {
     sessionId: sessionId ?? null,
@@ -1079,12 +1159,80 @@ function toAgentRunWireResult(
     status,
     responseId: responseId ?? null,
     message: message ?? "",
+    artifacts,
     agentId: agentId ?? null,
     idempotencyKey: idempotencyKey ?? null,
     notificationToken: notificationToken ?? null,
     errorMessage: errorMessage ?? null,
     runtime,
   };
+}
+
+function extractArtifactsFromStreamEvent(event: LLMStreamEvent): AgentArtifact[] {
+  switch (event.type) {
+    case "tool_result":
+      return normalizeArtifacts(event.artifacts);
+    case "output_item.done": {
+      const artifact = normalizeArtifact(toAgentArtifactOrRecord(event.itemId, event.item));
+      return artifact ? [artifact] : [];
+    }
+    default:
+      return [];
+  }
+}
+
+function collectArtifactsFromToolCalls(
+  toolCalls: Array<{ result?: { artifacts?: AgentArtifact[] } }>,
+): AgentArtifact[] {
+  const artifacts = new Map<string, AgentArtifact>();
+  for (const toolCall of toolCalls) {
+    upsertArtifacts(artifacts, toolCall.result?.artifacts ?? []);
+  }
+  return [...artifacts.values()];
+}
+
+function upsertArtifacts(
+  target: Map<string, AgentArtifact>,
+  artifacts: AgentArtifact[],
+): void {
+  for (const artifact of artifacts) {
+    target.set(artifact.artifactId, artifact);
+  }
+}
+
+function normalizeArtifacts(value: unknown): AgentArtifact[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(normalizeArtifact)
+    .filter((artifact): artifact is AgentArtifact => artifact !== null);
+}
+
+function normalizeArtifact(value: unknown): AgentArtifact | null {
+  if (!isRecord(value) || typeof value.artifactId !== "string") {
+    return null;
+  }
+  if (value.type === "data" && typeof value.dataType === "string" && isRecord(value.data)) {
+    return {
+      ...value,
+      type: "data",
+      artifactId: value.artifactId,
+      dataType: value.dataType,
+      data: value.data,
+    };
+  }
+  if (value.type === "file") {
+    return {
+      ...value,
+      type: "file",
+      artifactId: value.artifactId,
+      path: typeof value.path === "string" ? value.path : undefined,
+      text: typeof value.text === "string" ? value.text : undefined,
+      contentType: typeof value.contentType === "string" ? value.contentType : undefined,
+    };
+  }
+  return null;
 }
 
 function toRuntimePolicyWireValue(
@@ -1117,6 +1265,10 @@ function toResolvedRuntimeWireValue(
 
 function stringOrUndefined(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function resolveUserInput(

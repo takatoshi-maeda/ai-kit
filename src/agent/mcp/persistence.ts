@@ -1,4 +1,5 @@
 export type {
+  AgentArtifact,
   AgentSessionState,
   AgentSkillsSessionState,
   AgentPersistence,

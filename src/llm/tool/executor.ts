@@ -40,6 +40,7 @@ export class ToolExecutor {
       const parsed = tool.parameters.parse(toolCall.arguments);
       const result = await tool.execute(parsed, options);
       const envelope = normalizeToolResultEnvelope(result);
+      const artifacts = envelope?.artifacts ?? tool.artifacts?.(result, parsed);
       const content = envelope
         ? envelope.content ?? JSON.stringify(envelope.structuredContent ?? {})
         : typeof result === "string" ? result : JSON.stringify(result);
@@ -48,6 +49,7 @@ export class ToolExecutor {
         content,
         structuredContent: envelope?.structuredContent,
         outputContent: envelope?.outputContent,
+        artifacts,
         extra: {
           providerRaw: buildFunctionToolResultProviderRaw(
             toolCall,

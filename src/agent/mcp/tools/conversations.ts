@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { McpPersistence } from "../persistence.js";
+import type { AgentArtifact } from "../../../types/tool.js";
 import { fromFileSystemAssetRef } from "../../public-assets/filesystem.js";
 
 export const ConversationsListParamsSchema = z.object({
@@ -255,6 +256,7 @@ function formatConversationForWire(
     status: turn.status,
     errorMessage: turn.errorMessage ?? null,
     timeline: turn.timeline ?? null,
+    artifacts: normalizeArtifacts(turn.artifacts),
     agentId: turn.agentId ?? null,
     agentName: turn.agentName ?? null,
     runtime: turn.runtime ?? null,
@@ -272,6 +274,7 @@ function formatConversationForWire(
         userContent: mapUserContent(conversation.inProgress.userContent),
         assistantMessage: conversation.inProgress.assistantMessage ?? null,
         timeline: conversation.inProgress.timeline ?? null,
+        artifacts: normalizeArtifacts(conversation.inProgress.artifacts),
         agentId: conversation.inProgress.agentId ?? null,
         agentName: conversation.inProgress.agentName ?? null,
         runtime: conversation.inProgress.runtime ?? null,
@@ -286,10 +289,67 @@ function formatConversationForWire(
     agentId: conversation.agentId ?? null,
     agentName: conversation.agentName ?? null,
     status: conversation.status,
+    artifacts: collectLatestArtifacts(conversation),
     inProgress,
     turns,
     lastRuntime: conversation.lastRuntime ?? null,
   };
+}
+
+function collectLatestArtifacts(
+  conversation: Awaited<ReturnType<McpPersistence["readConversation"]>> extends infer T
+    ? Exclude<T, null>
+    : never,
+): AgentArtifact[] {
+  const artifacts = new Map<string, AgentArtifact>();
+  for (const turn of conversation.turns) {
+    for (const artifact of normalizeArtifacts(turn.artifacts)) {
+      artifacts.set(artifact.artifactId, artifact);
+    }
+  }
+  for (const artifact of normalizeArtifacts(conversation.inProgress?.artifacts)) {
+    artifacts.set(artifact.artifactId, artifact);
+  }
+  return [...artifacts.values()];
+}
+
+function normalizeArtifacts(value: unknown): AgentArtifact[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map(normalizeArtifact)
+    .filter((artifact): artifact is AgentArtifact => artifact !== null);
+}
+
+function normalizeArtifact(value: unknown): AgentArtifact | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.type === "data" && typeof record.artifactId === "string" && typeof record.dataType === "string") {
+    const data = record.data;
+    if (data && typeof data === "object" && !Array.isArray(data)) {
+      return {
+        ...record,
+        type: "data",
+        artifactId: record.artifactId,
+        dataType: record.dataType,
+        data: data as Record<string, unknown>,
+      };
+    }
+  }
+  if (record.type === "file" && typeof record.artifactId === "string") {
+    return {
+      ...record,
+      type: "file",
+      artifactId: record.artifactId,
+      path: typeof record.path === "string" ? record.path : undefined,
+      text: typeof record.text === "string" ? record.text : undefined,
+      contentType: typeof record.contentType === "string" ? record.contentType : undefined,
+    };
+  }
+  return null;
 }
 
 function toPublicAssetUrl(

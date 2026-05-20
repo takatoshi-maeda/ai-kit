@@ -89,6 +89,58 @@ describe("ToolExecutor", () => {
       expect(JSON.parse(result.content)).toEqual({ key: "value" });
     });
 
+    it("attaches artifacts derived from raw tool results", async () => {
+      const tool = defineTool({
+        name: "plan",
+        description: "Returns a plan",
+        parameters: z.object({ builderId: z.number() }),
+        execute: async () => ({
+          id: "meeting_plan_template_1",
+          status: "draft",
+          updatedAt: "2026-05-20T10:30:00.000Z",
+        }),
+        artifacts: (result, params) => [
+          {
+            type: "data",
+            artifactId: `meeting_plan_template:${params.builderId}:${result.id}`,
+            dataType: "meeting_plan_template",
+            data: {
+              builderId: params.builderId,
+              id: result.id,
+              status: result.status,
+              updatedAt: result.updatedAt,
+            },
+          },
+        ],
+      });
+      const executor = new ToolExecutor([tool]);
+
+      const result = await executor.execute({
+        id: "call-1",
+        name: "plan",
+        arguments: { builderId: 93 },
+      });
+
+      expect(JSON.parse(result.content)).toEqual({
+        id: "meeting_plan_template_1",
+        status: "draft",
+        updatedAt: "2026-05-20T10:30:00.000Z",
+      });
+      expect(result.artifacts).toEqual([
+        {
+          type: "data",
+          artifactId: "meeting_plan_template:93:meeting_plan_template_1",
+          dataType: "meeting_plan_template",
+          data: {
+            builderId: 93,
+            id: "meeting_plan_template_1",
+            status: "draft",
+            updatedAt: "2026-05-20T10:30:00.000Z",
+          },
+        },
+      ]);
+    });
+
     it("normalizes tool result envelopes with output content", async () => {
       const tool = defineTool({
         name: "doc",

@@ -1,4 +1,5 @@
 import type { LLMResult, LLMUsage } from "./llm.js";
+import type { AgentArtifact } from "./tool.js";
 
 export interface ResponseCreatedEvent {
   type: "response.created";
@@ -44,6 +45,7 @@ export interface ToolResultEvent {
   toolCallId: string;
   name: string;
   content: string;
+  artifacts?: AgentArtifact[];
   isError: boolean;
 }
 

@@ -83,6 +83,7 @@ export function assembleConversation(
       userContent: latestRunState.userContent,
       assistantMessage: latestRunState.assistantMessage,
       timeline: latestRunState.timeline,
+      artifacts: latestRunState.artifacts,
       metadata: latestRunState.metadata,
       agentId: latestRunState.agentId,
       agentName: latestRunState.agentName,

@@ -1,6 +1,9 @@
 import type { ContentPart } from "../../types/llm.js";
+import type { AgentArtifact } from "../../types/tool.js";
 import type { ResolvedAgentRuntime } from "../../types/runtime.js";
 import type { SerializedUsageCostSessionState } from "../../llm/costs.js";
+
+export type { AgentArtifact } from "../../types/tool.js";
 
 export interface AgentSkillsSessionState {
   workingDir: string;
@@ -41,6 +44,7 @@ export type TimelineItem =
       id: string;
       text: string;
       path?: string;
+      item?: AgentArtifact | Record<string, unknown>;
       contentType: "artifact";
       status: "running" | "completed";
     };
@@ -57,6 +61,7 @@ export interface ConversationTurn {
   status: "success" | "error" | "cancelled";
   errorMessage?: string;
   timeline?: TimelineItem[];
+  artifacts?: AgentArtifact[];
   agentId?: string;
   agentName?: string;
   runtime?: ResolvedAgentRuntime;
@@ -85,6 +90,7 @@ export interface Conversation {
     userContent?: string | ContentPart[];
     assistantMessage?: string;
     timeline?: TimelineItem[];
+    artifacts?: AgentArtifact[];
     metadata?: {
       usageCostSession?: SerializedUsageCostSessionState;
     };
@@ -156,6 +162,7 @@ export interface RunState {
   userContent?: string | ContentPart[];
   assistantMessage?: string;
   timeline?: TimelineItem[];
+  artifacts?: AgentArtifact[];
   metadata?: {
     usageCostSession?: SerializedUsageCostSessionState;
     sessionState?: AgentSessionState;

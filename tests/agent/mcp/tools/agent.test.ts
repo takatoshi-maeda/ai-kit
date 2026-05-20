@@ -1464,6 +1464,104 @@ describe("agent tools", () => {
       }
     });
 
+    it("forwards data artifacts as added and done without artifact deltas", async () => {
+      const artifact = {
+        type: "data" as const,
+        artifactId: "meeting_plan_template:93:meeting_plan_template_1",
+        dataType: "meeting_plan_template",
+        data: {
+          builderId: 93,
+          id: "meeting_plan_template_1",
+          status: "draft",
+          updatedAt: "2026-05-20T10:30:00.000Z",
+        },
+      };
+      const notifications: Array<{ method: string; params: Record<string, unknown> }> = [];
+      function streamingDataArtifactAgent(ctx: AgentContext): ConversationalAgent {
+        const client: LLMClient = {
+          model: "test-model",
+          provider: "openai",
+          capabilities: defaultCapabilities,
+          async invoke() {
+            throw new Error("invoke should not be called");
+          },
+          async *stream() {
+            yield {
+              type: "tool_result",
+              toolCallId: "tool-1",
+              name: "meeting_plan_create",
+              content: JSON.stringify({ id: "meeting_plan_template_1" }),
+              artifacts: [artifact],
+              isError: false,
+            };
+            yield { type: "response.completed", result: makeResult("created") };
+          },
+          estimateTokens: () => 10,
+        };
+        return new ConversationalAgent({
+          context: ctx,
+          client,
+          instructions: "Streaming data artifact agent",
+        });
+      }
+
+      const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-data-artifact-"));
+      try {
+        const registry = new AgentRegistry({
+          agents: [{ create: streamingDataArtifactAgent, agentId: "test" }],
+        });
+        const persistence = new JsonlMcpPersistence(new FileSystemStorage(tempDir));
+        const deps: AgentToolDeps = {
+          registry,
+          persistence,
+          sendNotification: vi.fn(async (method: string, params: Record<string, unknown>) => {
+            notifications.push({ method, params });
+          }),
+        };
+
+        const run = await handleAgentRun(deps, {
+          message: "Hello",
+          agentId: "test",
+          sessionId: "sess-data-artifact",
+          stream: true,
+        });
+        const runPayload = JSON.parse(run.content[0].text);
+
+        const artifactEvents = notifications
+          .map((entry) => entry.params)
+          .filter((params) =>
+            params.type === "agent.output_item.added" ||
+            params.type === "agent.output_item.done" ||
+            params.type === "agent.artifact_delta"
+          );
+        expect(artifactEvents).toEqual([
+          {
+            type: "agent.output_item.added",
+            itemId: artifact.artifactId,
+            item: artifact,
+            content_type: "artifact",
+          },
+          {
+            type: "agent.output_item.done",
+            itemId: artifact.artifactId,
+            item: artifact,
+            content_type: "artifact",
+          },
+        ]);
+        expect(runPayload.artifacts).toEqual([artifact]);
+
+        const conversation = await handleConversationsGet(persistence, {
+          sessionId: "sess-data-artifact",
+          agentId: "test",
+        });
+        const payload = JSON.parse(conversation.content[0].text);
+        expect(payload.artifacts).toEqual([artifact]);
+        expect(payload.turns[0].artifacts).toEqual([artifact]);
+      } finally {
+        await fs.rm(tempDir, { recursive: true, force: true });
+      }
+    });
+
     it("returns artifact path from in-progress timeline snapshots", async () => {
       const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "ai-kit-agent-artifact-in-progress-"));
       try {

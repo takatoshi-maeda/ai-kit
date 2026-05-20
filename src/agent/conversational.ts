@@ -345,6 +345,7 @@ export class ConversationalAgent {
             toolCallId: result.toolCallId,
             name: toolCall.name,
             content: result.content,
+            artifacts: result.artifacts,
             isError: !!result.isError,
           };
         }

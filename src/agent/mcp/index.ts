@@ -36,6 +36,7 @@ export type {
   AgentSessionState,
   AgentSkillsSessionState,
   AgentPersistence,
+  AgentArtifact,
   McpPersistence,
   Conversation,
   ConversationStateEvent,
