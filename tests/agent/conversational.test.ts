@@ -1019,6 +1019,46 @@ describe("ConversationalAgent", () => {
       await agent.invoke("Hi", "Extra info");
       expect(receivedInstructions).toBe("Base instructions\n\nExtra info");
     });
+
+    it("prepends additional instruction messages without changing base instructions", async () => {
+      const result = makeResult({ content: "OK" });
+      let receivedInput: LLMChatInput | undefined;
+
+      const client: LLMClient = {
+        model: "test",
+        provider: "openai",
+        capabilities: defaultCapabilities,
+        async invoke() {
+          return result;
+        },
+        async *stream(input) {
+          receivedInput = input;
+          for (const event of makeStreamEvents(result)) {
+            yield event;
+          }
+        },
+        estimateTokens: () => 10,
+      };
+
+      const context = new AgentContextImpl({ history: stubHistory() });
+      const agent = new ConversationalAgent({
+        context,
+        client,
+        instructions: "Base instructions",
+      });
+
+      await agent.invoke("Hi", [
+        { role: "system", content: "Skill A" },
+        { role: "system", content: "Skill B" },
+      ]);
+
+      expect(receivedInput?.instructions).toBe("Base instructions");
+      expect(receivedInput?.messages.slice(0, 3)).toEqual([
+        { role: "system", content: "Skill A" },
+        { role: "system", content: "Skill B" },
+        { role: "user", content: "Hi" },
+      ]);
+    });
   });
 
   describe("conversation history", () => {

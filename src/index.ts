@@ -129,6 +129,7 @@ export type { AgentContextOptions } from "./agent/index.js";
 export { ProgressTrackerImpl } from "./agent/index.js";
 export { ConversationalAgent } from "./agent/index.js";
 export {
+  buildActiveSkillsInstructionMessages,
   buildActiveSkillsInstructions,
   collectSkillMentionNames,
   listSkills,
@@ -136,7 +137,7 @@ export {
   stripResolvedSkillMentions,
 } from "./agent/index.js";
 export type { DiscoveredSkill } from "./agent/index.js";
-export type { AgentStream } from "./agent/index.js";
+export type { AdditionalInstructions, AgentStream } from "./agent/index.js";
 export { StructuredAgent } from "./agent/index.js";
 export { AgentRouter } from "./agent/index.js";
 export type { AgentRouterOptions } from "./agent/index.js";

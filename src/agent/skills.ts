@@ -3,7 +3,7 @@ import type { Dirent } from "node:fs";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
-import type { ContentPart } from "../types/llm.js";
+import type { ContentPart, LLMMessage } from "../types/llm.js";
 import type { AgentReasoningEffort, AgentVerbosity } from "../types/runtime.js";
 
 export interface SkillAgentRuntime {
@@ -117,19 +117,30 @@ export function buildActiveSkillsInstructions(skills: DiscoveredSkill[]): string
     return undefined;
   }
 
-  const blocks = skills.map((skill) => [
+  const blocks = skills.map(buildActiveSkillInstructionBlock);
+
+  return [
+    "<active_skills>",
+    ...blocks,
+    "</active_skills>",
+  ].join("\n");
+}
+
+export function buildActiveSkillsInstructionMessages(skills: DiscoveredSkill[]): LLMMessage[] {
+  return skills.map((skill) => ({
+    role: "system",
+    content: buildActiveSkillInstructionBlock(skill),
+  }));
+}
+
+function buildActiveSkillInstructionBlock(skill: DiscoveredSkill): string {
+  return [
     `<skill_content name="${escapeAttribute(skill.name)}">`,
     skill.body.trim(),
     "",
     `Skill directory: ${skill.directory}`,
     "Relative paths are resolved from this directory.",
     "</skill_content>",
-  ].join("\n"));
-
-  return [
-    "<active_skills>",
-    ...blocks,
-    "</active_skills>",
   ].join("\n");
 }
 

@@ -46,6 +46,8 @@ export interface AgentStream extends AsyncIterable<LLMStreamEvent> {
   readonly result: Promise<AgentResult>;
 }
 
+export type AdditionalInstructions = string | LLMMessage[];
+
 const DEFAULT_MAX_TURNS = 10;
 const USAGE_COST_SESSION_METADATA_KEY = "usageCostSession";
 
@@ -62,7 +64,7 @@ export class ConversationalAgent {
 
   stream(
     input: string | ContentPart[],
-    additionalInstructions?: string,
+    additionalInstructions?: AdditionalInstructions,
     options?: AgentInvocationOptions,
   ): AgentStream {
     const self = this;
@@ -202,7 +204,7 @@ export class ConversationalAgent {
 
   async invoke(
     input: string | ContentPart[],
-    additionalInstructions?: string,
+    additionalInstructions?: AdditionalInstructions,
     options?: AgentInvocationOptions,
   ): Promise<AgentResult> {
     const agentStream = this.stream(input, additionalInstructions, options);
@@ -237,7 +239,7 @@ export class ConversationalAgent {
 
   private async *runLoop(
     input: string | ContentPart[],
-    additionalInstructions?: string,
+    additionalInstructions?: AdditionalInstructions,
     getUsageCostSession?: () => ReturnType<typeof createUsageCostSessionRunner> | null,
     options?: AgentInvocationOptions,
   ): AsyncGenerator<LLMStreamEvent, AgentResult> {
@@ -280,12 +282,18 @@ export class ConversationalAgent {
 
       // 2. Build chat input
       const historyMessages = await context.history.toLLMMessages();
-      const combinedInstructions = additionalInstructions
-        ? `${instructions}\n\n${additionalInstructions}`
+      const additionalInstructionText = typeof additionalInstructions === "string"
+        ? additionalInstructions
+        : undefined;
+      const additionalInstructionMessages = Array.isArray(additionalInstructions)
+        ? additionalInstructions
+        : [];
+      const combinedInstructions = additionalInstructionText
+        ? `${instructions}\n\n${additionalInstructionText}`
         : instructions;
 
       const chatInput = this.buildChatInput(
-        [...historyMessages, ...pendingMessages],
+        [...additionalInstructionMessages, ...historyMessages, ...pendingMessages],
         combinedInstructions,
       );
 

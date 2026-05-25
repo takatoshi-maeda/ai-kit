@@ -2,13 +2,14 @@ export { AgentContextImpl } from "./context.js";
 export type { AgentContextOptions } from "./context.js";
 export { ProgressTrackerImpl } from "./progress.js";
 export { ConversationalAgent } from "./conversational.js";
-export type { AgentStream } from "./conversational.js";
+export type { AdditionalInstructions, AgentStream } from "./conversational.js";
 export { StructuredAgent } from "./structured.js";
 export { AgentRouter } from "./router.js";
 export type { AgentRouterOptions } from "./router.js";
 export { AgentProxy } from "./proxy.js";
 export { OpenAINativeToolRuntime } from "./native-tools/runtime.js";
 export {
+  buildActiveSkillsInstructionMessages,
   buildActiveSkillsInstructions,
   collectSkillMentionNames,
   listSkills,

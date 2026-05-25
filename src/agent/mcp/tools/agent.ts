@@ -7,7 +7,7 @@ import type { AgentArtifact, McpPersistence, ConversationTurn, TimelineItem } fr
 import { AgentContextImpl } from "../../context.js";
 import { InMemoryHistory } from "../../conversation/memory-history.js";
 import {
-  buildActiveSkillsInstructions,
+  buildActiveSkillsInstructionMessages,
   collectSkillMentionNames,
   listSkills,
   resolveSkillsByName,
@@ -295,7 +295,7 @@ export async function handleAgentRun(
     ...mentionedSkillNames,
   ];
   const resolvedSkills = resolveSkillsByName(availableSkills, activeSkillNames);
-  const additionalInstructions = buildActiveSkillsInstructions([...resolvedSkills.values()]);
+  const additionalInstructions = buildActiveSkillsInstructionMessages([...resolvedSkills.values()]);
   const sanitizedUserInput = stripResolvedSkillMentions(
     resolvedUserInput,
     resolvedSkills.keys(),

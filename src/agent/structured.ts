@@ -1,7 +1,7 @@
 import type { ZodType } from "zod";
 import type { AgentOptions, AgentResult } from "../types/agent.js";
 import type { ContentPart, LLMChatInput, LLMMessage } from "../types/llm.js";
-import { ConversationalAgent } from "./conversational.js";
+import { ConversationalAgent, type AdditionalInstructions } from "./conversational.js";
 
 export class StructuredAgent<T> extends ConversationalAgent {
   private readonly responseSchema: ZodType<T>;
@@ -27,7 +27,7 @@ export class StructuredAgent<T> extends ConversationalAgent {
 
   override async invoke(
     input: string | ContentPart[],
-    additionalInstructions?: string,
+    additionalInstructions?: AdditionalInstructions,
   ): Promise<AgentResult & { parsed: T }> {
     const result = await super.invoke(input, additionalInstructions);
     const parsed = this.responseSchema.parse(

@@ -3,7 +3,10 @@ import os from "node:os";
 import path from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import * as fs from "node:fs/promises";
-import { listSkills } from "../../src/agent/skills.js";
+import {
+  buildActiveSkillsInstructionMessages,
+  listSkills,
+} from "../../src/agent/skills.js";
 
 async function writeSkill(
   filesRoot: string,
@@ -129,6 +132,37 @@ describe("skill discovery", () => {
       name: "focus",
       description: "Workspace focus",
       directory: path.join(tmpDir, ".skills", "focus"),
+    });
+  });
+});
+
+describe("active skill instructions", () => {
+  it("builds one system message per active skill", () => {
+    const messages = buildActiveSkillsInstructionMessages([
+      {
+        name: "focus",
+        description: "Focus mode",
+        mention: "$focus",
+        directory: "/tmp/focus",
+        body: "Be concise.",
+      },
+      {
+        name: "review",
+        description: "Review mode",
+        mention: "$review",
+        directory: "/tmp/review",
+        body: "Find bugs.",
+      },
+    ]);
+
+    expect(messages).toHaveLength(2);
+    expect(messages[0]).toMatchObject({
+      role: "system",
+      content: expect.stringContaining('<skill_content name="focus">'),
+    });
+    expect(messages[1]).toMatchObject({
+      role: "system",
+      content: expect.stringContaining('<skill_content name="review">'),
     });
   });
 });
