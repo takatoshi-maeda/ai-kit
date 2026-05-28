@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import type {
   LLMCallOptions,
@@ -259,11 +260,15 @@ export class AnthropicClient implements LLMClient {
     }
 
     if (this.options.thinking) {
-      params.thinking = {
-        type: "enabled",
-        budget_tokens: this.options.thinking.budgetTokens,
-      };
+      params.thinking = this.options.thinking.type === "adaptive"
+        ? ({ type: "adaptive" } as unknown as Anthropic.ThinkingConfigParam)
+        : {
+          type: "enabled",
+          budget_tokens: this.options.thinking.budgetTokens,
+        };
     }
+
+    logAnthropicThinkingDebug(params);
 
     return params;
   }
@@ -612,4 +617,73 @@ function stripToolCallSummaryLines(text: string): string {
 function isToolCallSummaryLine(line: string): boolean {
   const trimmed = line.trim();
   return trimmed.startsWith("[tool_call: ") && trimmed.endsWith("]");
+}
+
+function logAnthropicThinkingDebug(params: Anthropic.MessageCreateParams): void {
+  if (process.env.AI_KIT_DEBUG_ANTHROPIC_THINKING !== "1") {
+    return;
+  }
+
+  const assistantMessages = params.messages
+    .map((message, messageIndex) => {
+      if (message.role !== "assistant" || !Array.isArray(message.content)) {
+        return null;
+      }
+      const blocks = message.content
+        .map((block, blockIndex) => summarizeAnthropicContentBlock(block, blockIndex))
+        .filter((block) => block !== null);
+      return blocks.length > 0 ? { messageIndex, blocks } : null;
+    })
+    .filter((message) => message !== null);
+
+  const payload = {
+    event: "anthropic.thinking_payload",
+    model: params.model,
+    thinking: params.thinking,
+    assistantMessagesWithThinkingOrTools: assistantMessages,
+  };
+
+  console.error(JSON.stringify(payload));
+}
+
+function summarizeAnthropicContentBlock(
+  block: Anthropic.ContentBlockParam,
+  blockIndex: number,
+): Record<string, unknown> | null {
+  if (block.type === "thinking") {
+    const signature = typeof block.signature === "string" ? block.signature : "";
+    return {
+      blockIndex,
+      type: block.type,
+      hasSignature: signature.length > 0,
+      signatureLength: signature.length,
+      signatureSha256Prefix: signature
+        ? createHash("sha256").update(signature).digest("hex").slice(0, 16)
+        : null,
+      thinkingLength: block.thinking.length,
+    };
+  }
+
+  if (block.type === "redacted_thinking") {
+    const data = typeof block.data === "string" ? block.data : "";
+    return {
+      blockIndex,
+      type: block.type,
+      dataLength: data.length,
+      dataSha256Prefix: data
+        ? createHash("sha256").update(data).digest("hex").slice(0, 16)
+        : null,
+    };
+  }
+
+  if (block.type === "tool_use") {
+    return {
+      blockIndex,
+      type: block.type,
+      id: block.id,
+      name: block.name,
+    };
+  }
+
+  return null;
 }

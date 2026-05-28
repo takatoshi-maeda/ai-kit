@@ -34,7 +34,7 @@ export interface OpenAIClientOptions extends LLMClientOptionsBase {
 
 export interface AnthropicClientOptions extends LLMClientOptionsBase {
   provider: "anthropic";
-  thinking?: { budgetTokens: number };
+  thinking?: { type: "adaptive" } | { type?: "enabled"; budgetTokens: number };
 }
 
 export interface GoogleClientOptions extends LLMClientOptionsBase {

@@ -504,6 +504,24 @@ describe("AnthropicClient", () => {
       });
     });
 
+    it("passes adaptive thinking config when specified", async () => {
+      mockCreate.mockResolvedValue({
+        id: "msg-7a",
+        content: [{ type: "text", text: "ok" }],
+        stop_reason: "end_turn",
+        type: "message",
+        usage: { input_tokens: 5, output_tokens: 5 },
+      });
+
+      const client = makeClient({ thinking: { type: "adaptive" } });
+      await client.invoke(makeBasicInput());
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.thinking).toEqual({
+        type: "adaptive",
+      });
+    });
+
     it("maps max_tokens stop reason to length", async () => {
       mockCreate.mockResolvedValue({
         id: "msg-8",
