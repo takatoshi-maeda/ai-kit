@@ -10,13 +10,18 @@ export function toolCallsToMessages(
   // Assistant message with tool calls info
   const toolCallSummary = toolCalls
     .map((tc) => summarizeToolCall(tc))
+    .filter((summary) => summary.length > 0)
+    .join("\n");
+  const assistantText = [assistantContent, toolCallSummary]
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
     .join("\n");
 
   messages.push({
     role: "assistant",
-    content: assistantContent
-      ? `${assistantContent}\n${toolCallSummary}`
-      : toolCallSummary,
+    content: assistantText,
+    extra: {
+      providerRaw: normalizeAssistantProviderRaw(toolCalls),
+    },
   });
 
   // Tool result messages
@@ -55,6 +60,9 @@ export function toolCallsToMessages(
 
 function summarizeToolCall(toolCall: LLMToolCall): string {
   if (toolCall.executionKind === "provider_native") {
+    if (toolCall.provider === "anthropic" && isAnthropicProviderRawTransport(toolCall.extra?.providerRaw)) {
+      return "";
+    }
     return `[tool_call: ${toolCall.name}]`;
   }
 
@@ -91,6 +99,27 @@ function normalizeProviderRaw(toolCall: LLMToolCall): ProviderRawTransport | und
     inputItems,
     outputItems: asArray((callRaw as { outputItems?: unknown[] }).outputItems),
   };
+}
+
+function normalizeAssistantProviderRaw(toolCalls: LLMToolCall[]): ProviderRawTransport | undefined {
+  const providerRawValues = toolCalls.map((tc) => tc.extra?.providerRaw);
+  const anthropicRaw = providerRawValues.find(isAnthropicProviderRawTransport);
+  if (!anthropicRaw) {
+    return undefined;
+  }
+
+  return {
+    provider: "anthropic",
+    outputItems: asArray(anthropicRaw.outputItems),
+  };
+}
+
+function isProviderRawTransport(value: unknown): value is ProviderRawTransport {
+  return !!value && typeof value === "object" && !Array.isArray(value) && "provider" in value;
+}
+
+function isAnthropicProviderRawTransport(value: unknown): value is ProviderRawTransport {
+  return isProviderRawTransport(value) && value.provider === "anthropic";
 }
 
 function asArray(value: unknown): unknown[] {

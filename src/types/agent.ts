@@ -1,6 +1,7 @@
 import type { ZodType } from "zod";
 import type { AuthContext } from "../auth/index.js";
 import type { LLMCallOptions, LLMChatInput, LLMResult, LLMUsage } from "./llm.js";
+import type { AgentRuntimePolicy, ResolvedAgentRuntime } from "./runtime.js";
 import type {
   AgentTool,
   LLMToolCall,
@@ -59,10 +60,16 @@ export interface AgentInvocationOptions {
 export interface AgentSkillResolverContext {
   agentContext: AgentContext;
   params?: Record<string, unknown>;
+  runtime?: ResolvedAgentRuntime;
+  runtimePolicy?: AgentRuntimePolicy;
 }
 
+export type BuiltInSkillRootsResolver = (
+  context: AgentSkillResolverContext,
+) => string[] | Promise<string[]>;
+
 export interface AgentSkillsOptions {
-  builtInSkillRoots?: string[];
+  builtInSkillRoots?: string[] | BuiltInSkillRootsResolver;
   resolveWorkingDir: (
     context: AgentSkillResolverContext,
   ) => string | Promise<string>;

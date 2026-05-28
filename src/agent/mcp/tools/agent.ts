@@ -30,7 +30,7 @@ import type {
   ResolvedAgentRuntime,
 } from "../../../types/runtime.js";
 import { resolveAgentRuntime } from "../runtime.js";
-import { resolveAgentWorkingDir } from "./skills.js";
+import { resolveAgentBuiltInSkillRoots, resolveAgentWorkingDir } from "./skills.js";
 
 const ImageSourceSchema = z.union([
   z.object({
@@ -268,6 +268,10 @@ export async function handleAgentRun(
   }
 
   const entry = deps.registry.get(agentId);
+  const resolvedRuntime = resolveAgentRuntime(
+    entry.runtimePolicy,
+    requestedRuntime,
+  );
   const existingConversation = await deps.persistence.readConversation(sessionId, agentId);
   const workingDir = await resolveAgentWorkingDir(
     deps.registry,
@@ -286,7 +290,14 @@ export async function handleAgentRun(
 
   const availableSkills = workingDir
     ? await listSkills(workingDir, {
-        builtInSkillRoots: entry.skills?.builtInSkillRoots,
+        builtInSkillRoots: await resolveAgentBuiltInSkillRoots(
+          deps.registry,
+          agentId,
+          deps.authContext,
+          agentParams,
+          resolvedRuntime,
+        ),
+        provider: entry.runtimePolicy?.provider,
       })
     : [];
   const mentionedSkillNames = collectSkillMentionNames(resolvedUserInput);
@@ -347,10 +358,6 @@ export async function handleAgentRun(
   }
 
   // Record run state as started
-  const resolvedRuntime = resolveAgentRuntime(
-    entry.runtimePolicy,
-    requestedRuntime,
-  );
   const startedAt = new Date().toISOString();
   const runTimeline: TimelineItem[] = [];
   const runArtifacts = new Map<string, AgentArtifact>();

@@ -68,4 +68,11 @@ export class ModelRegistry {
   ): number | undefined {
     return this.getModel(provider, modelId)?.contextWindowSize;
   }
+
+  getMaxOutputTokens(
+    provider: string,
+    modelId: string,
+  ): number | undefined {
+    return this.getModel(provider, modelId)?.maxOutputTokens;
+  }
 }

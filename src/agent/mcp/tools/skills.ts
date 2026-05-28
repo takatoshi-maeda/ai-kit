@@ -2,8 +2,9 @@ import { z } from "zod";
 import type { AuthContext } from "../../../auth/index.js";
 import { AgentContextImpl } from "../../context.js";
 import { InMemoryHistory } from "../../conversation/memory-history.js";
-import { listSkills } from "../../skills.js";
+import { listSkills, resolveBuiltInSkillRoots } from "../../skills.js";
 import type { AgentRegistry } from "../agent-registry.js";
+import { resolveAgentRuntime } from "../runtime.js";
 
 export const SkillsListParamsSchema = z.object({
   agentId: z.string().optional().describe("Agent ID to inspect. Defaults to the default agent."),
@@ -43,7 +44,13 @@ export async function handleSkillsList(
 
   const payload = {
     items: (await listSkills(workingDir, {
-      builtInSkillRoots: entry.skills?.builtInSkillRoots,
+      builtInSkillRoots: await resolveAgentBuiltInSkillRoots(
+        deps.registry,
+        agentId,
+        deps.authContext,
+        params.params,
+      ),
+      provider: entry.runtimePolicy?.provider,
     })).map((skill) => ({
       name: skill.name,
       description: skill.description,
@@ -92,6 +99,33 @@ export async function resolveAgentWorkingDir(
   const workingDir = await entry.skills.resolveWorkingDir({
     agentContext: context,
     params,
+    runtime: resolveAgentRuntime(entry.runtimePolicy),
+    runtimePolicy: entry.runtimePolicy,
   });
   return workingDir.trim();
+}
+
+export async function resolveAgentBuiltInSkillRoots(
+  registry: AgentRegistry,
+  agentId: string,
+  authContext?: AuthContext,
+  params?: Record<string, unknown>,
+  runtime = resolveAgentRuntime(registry.get(agentId).runtimePolicy),
+): Promise<string[]> {
+  const entry = registry.get(agentId);
+  if (!entry.skills) {
+    return [];
+  }
+
+  const context = new AgentContextImpl({
+    history: new InMemoryHistory(),
+    auth: authContext,
+    selectedAgentName: agentId,
+  });
+  return resolveBuiltInSkillRoots(entry.skills, {
+    agentContext: context,
+    params,
+    runtime,
+    runtimePolicy: entry.runtimePolicy,
+  });
 }

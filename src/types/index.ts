@@ -35,6 +35,7 @@ export type {
   ProviderNativeTool,
   OpenAINativeShellTool,
   OpenAINativeApplyPatchTool,
+  AnthropicNativeTextEditorTool,
   ProviderRawTransport,
 } from "./tool.js";
 

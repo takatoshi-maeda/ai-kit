@@ -41,6 +41,7 @@ describe("ModelRegistry", () => {
         modelId: "claude-sonnet-4-20250514",
         displayName: "Claude Sonnet 4",
         contextWindowSize: 200_000,
+        maxOutputTokens: 64_000,
         inputCostPer1MTokens: 3,
         outputCostPer1MTokens: 15,
       });
@@ -141,6 +142,16 @@ describe("ModelRegistry", () => {
 
     it("returns undefined for unknown model", () => {
       expect(ModelRegistry.default.getContextWindowSize("openai", "nonexistent")).toBeUndefined();
+    });
+  });
+
+  describe("getMaxOutputTokens", () => {
+    it("returns max output tokens for known model", () => {
+      expect(ModelRegistry.default.getMaxOutputTokens("anthropic", "claude-sonnet-4-6")).toBe(128_000);
+    });
+
+    it("returns undefined for unknown model", () => {
+      expect(ModelRegistry.default.getMaxOutputTokens("anthropic", "nonexistent")).toBeUndefined();
     });
   });
 

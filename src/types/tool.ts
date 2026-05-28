@@ -25,10 +25,14 @@ export type ToolExecutionKind = "user_function" | "provider_native";
 
 export interface ProviderNativeToolBase {
   kind: "provider_native";
+  provider: "openai" | "anthropic";
+}
+
+export interface OpenAIProviderNativeToolBase extends ProviderNativeToolBase {
   provider: "openai";
 }
 
-export interface OpenAINativeShellTool extends ProviderNativeToolBase {
+export interface OpenAINativeShellTool extends OpenAIProviderNativeToolBase {
   type: "shell";
   workingDir: string;
   timeoutMs: number;
@@ -37,21 +41,31 @@ export interface OpenAINativeShellTool extends ProviderNativeToolBase {
   inheritEnv?: boolean;
 }
 
-export interface OpenAINativeApplyPatchTool extends ProviderNativeToolBase {
+export interface OpenAINativeApplyPatchTool extends OpenAIProviderNativeToolBase {
   type: "apply_patch";
   allowedPaths: string[];
 }
 
+export interface AnthropicNativeTextEditorTool extends ProviderNativeToolBase {
+  provider: "anthropic";
+  type: "text_editor_20250728";
+  name: "str_replace_based_edit_tool";
+  maxCharacters?: number;
+}
+
 export type ProviderNativeTool =
   | OpenAINativeShellTool
-  | OpenAINativeApplyPatchTool;
+  | OpenAINativeApplyPatchTool
+  | AnthropicNativeTextEditorTool;
 
 export type AgentTool = ToolDefinition | ProviderNativeTool;
 
 export interface ProviderRawTransport {
-  provider: "openai";
+  provider: "openai" | "anthropic";
   inputItems?: unknown[];
   outputItems?: unknown[];
+  stopReason?: string | null;
+  finishReason?: string;
 }
 
 export interface LLMToolCall {
@@ -59,7 +73,7 @@ export interface LLMToolCall {
   name: string;
   arguments: Record<string, unknown>;
   executionKind?: ToolExecutionKind;
-  provider?: "openai";
+  provider?: "openai" | "anthropic";
   extra?: Record<string, unknown>;
   result?: LLMToolResult;
 }

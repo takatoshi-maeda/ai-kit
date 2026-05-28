@@ -73,4 +73,41 @@ describe("toolCallsToMessages", () => {
     expect(messages[1].name).toBe("tool_a");
     expect(messages[2].name).toBe("tool_b");
   });
+
+  it("does not synthesize assistant text for Anthropic native tool calls with raw blocks", () => {
+    const toolCalls: LLMToolCall[] = [
+      {
+        id: "toolu-1",
+        name: "str_replace_based_edit_tool",
+        provider: "anthropic",
+        executionKind: "provider_native",
+        arguments: { command: "create", path: "/workspace/writing/note.md" },
+        extra: {
+          providerRaw: {
+            provider: "anthropic",
+            outputItems: [
+              {
+                type: "tool_use",
+                id: "toolu-1",
+                name: "str_replace_based_edit_tool",
+                input: { command: "create", path: "/workspace/writing/note.md" },
+              },
+            ],
+          },
+        },
+        result: {
+          toolCallId: "toolu-1",
+          content: "text_editor file_text must be a string",
+          isError: true,
+        },
+      },
+    ];
+
+    const messages = toolCallsToMessages(toolCalls);
+
+    expect(messages[0].role).toBe("assistant");
+    expect(messages[0].content).toBe("");
+    expect(messages[0].extra?.providerRaw?.provider).toBe("anthropic");
+    expect(messages[1].role).toBe("tool");
+  });
 });

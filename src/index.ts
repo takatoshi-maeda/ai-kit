@@ -33,6 +33,7 @@ export type {
   ProviderNativeTool,
   OpenAINativeShellTool,
   OpenAINativeApplyPatchTool,
+  AnthropicNativeTextEditorTool,
   ProviderRawTransport,
   // Agent
   AgentContext,

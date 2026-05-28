@@ -23,6 +23,14 @@ export class OpenAINativeToolRuntime implements NativeToolRuntime {
       };
     }
 
+    if (tool.provider !== "openai") {
+      return {
+        toolCallId: toolCall.id,
+        content: `Native tool is not enabled for OpenAI runtime: ${toolCall.name}`,
+        isError: true,
+      };
+    }
+
     if (tool.type === "shell") {
       return executeOpenAIShellToolCall(toolCall, tool);
     }
@@ -33,6 +41,6 @@ export class OpenAINativeToolRuntime implements NativeToolRuntime {
     toolCall: LLMToolCall,
     tools: ProviderNativeTool[],
   ): ProviderNativeTool | undefined {
-    return tools.find((tool) => tool.provider === toolCall.provider && tool.type === toolCall.name);
+    return tools.find((tool) => tool.provider === "openai" && tool.provider === toolCall.provider && tool.type === toolCall.name);
   }
 }

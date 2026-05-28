@@ -8,7 +8,13 @@ import type {
   ContentPart,
   ResponseFormat,
 } from "../../types/llm.js";
-import { isFunctionToolDefinition, type LLMToolCall } from "../../types/tool.js";
+import {
+  isFunctionToolDefinition,
+  isProviderNativeTool,
+  type AgentTool,
+  type AnthropicNativeTextEditorTool,
+  type LLMToolCall,
+} from "../../types/tool.js";
 import type { LLMStreamEvent } from "../../types/stream-events.js";
 import type { ModelCapabilities } from "../../types/model.js";
 import type { LLMClient, AnthropicClientOptions } from "../client.js";
@@ -21,6 +27,8 @@ import {
 } from "../../errors.js";
 import type { ToolDefinition } from "../../types/tool.js";
 import { withComputedUsageCost } from "../costs.js";
+
+const TEXT_EDITOR_TOOL_NAME = "str_replace_based_edit_tool";
 
 export class AnthropicClient implements LLMClient {
   readonly provider = "anthropic" as const;
@@ -173,6 +181,9 @@ export class AnthropicClient implements LLMClient {
                 toolCallId: stoppedBlock.toolCallId ?? "",
                 name: stoppedBlock.name ?? "",
                 arguments: args,
+                ...(stoppedBlock.name === TEXT_EDITOR_TOOL_NAME
+                  ? { executionKind: "provider_native" as const, provider: "anthropic" as const }
+                  : { provider: "anthropic" as const }),
               };
             }
             activeBlocks.delete(event.index);
@@ -211,7 +222,7 @@ export class AnthropicClient implements LLMClient {
     );
 
     const messages = this.convertMessages(chatMessages);
-    const tools = input.tools?.filter(isFunctionToolDefinition).map((t) => this.convertTool(t));
+    const tools = input.tools?.map((t) => this.convertTool(t)).filter((t) => t !== null);
 
     const params: Anthropic.MessageCreateParams = {
       model: this.model,
@@ -285,6 +296,7 @@ export class AnthropicClient implements LLMClient {
       }
 
       const assistantBlocks = assistant.content as Anthropic.ContentBlockParam[];
+      removeToolCallSummaryTextBlocks(assistantBlocks);
       const toolResultBlocks: Anthropic.ToolResultBlockParam[] = [];
 
       for (const toolMsg of toolRun) {
@@ -299,7 +311,7 @@ export class AnthropicClient implements LLMClient {
             type: "tool_use",
             id: toolUseId,
             name: toolName,
-            input: {},
+            input: extractToolCallArguments(toolMsg),
           });
         }
 
@@ -346,6 +358,10 @@ export class AnthropicClient implements LLMClient {
     }
 
     const role = msg.role === "user" ? "user" : "assistant";
+    const rawContent = role === "assistant" ? getAnthropicRawContentBlocks(msg) : undefined;
+    if (rawContent) {
+      return { role, content: rawContent };
+    }
 
     if (typeof msg.content === "string") {
       return { role, content: msg.content };
@@ -386,7 +402,14 @@ export class AnthropicClient implements LLMClient {
     }
   }
 
-  private convertTool(tool: ToolDefinition): Anthropic.Messages.Tool {
+  private convertTool(tool: AgentTool): Anthropic.Messages.Tool | null {
+    if (isProviderNativeTool(tool)) {
+      if (tool.provider === "anthropic" && tool.type === "text_editor_20250728") {
+        return this.convertTextEditorTool(tool);
+      }
+      return null;
+    }
+
     const schema = toolToJsonSchema(tool);
     return {
       name: schema.name,
@@ -396,6 +419,16 @@ export class AnthropicClient implements LLMClient {
         ...(schema.parameters as Record<string, unknown>),
       },
     };
+  }
+
+  private convertTextEditorTool(
+    tool: AnthropicNativeTextEditorTool,
+  ): Anthropic.Messages.Tool {
+    return {
+      type: tool.type,
+      name: tool.name,
+      ...(tool.maxCharacters === undefined ? {} : { max_characters: tool.maxCharacters }),
+    } as unknown as Anthropic.Messages.Tool;
   }
 
   private convertToolChoice(
@@ -416,23 +449,7 @@ export class AnthropicClient implements LLMClient {
   private mapResponse(response: Anthropic.Message): LLMResult {
     const toolCalls: LLMToolCall[] = [];
     let textContent = "";
-
-    for (const block of response.content) {
-      if (block.type === "text") {
-        textContent += block.text;
-      } else if (block.type === "tool_use") {
-        toolCalls.push({
-          id: block.id,
-          name: block.name,
-          arguments: block.input as Record<string, unknown>,
-        });
-      }
-      // Ignore thinking/redacted_thinking blocks for result
-    }
-
-    const hasToolCalls = toolCalls.length > 0;
-    const usage = this.mapUsage(response.usage);
-
+    const outputItems = response.content.map((block) => block as unknown);
     let finishReason: LLMResult["finishReason"] = "stop";
     switch (response.stop_reason) {
       case "tool_use":
@@ -447,6 +464,33 @@ export class AnthropicClient implements LLMClient {
         break;
     }
 
+    for (const block of response.content) {
+      if (block.type === "text") {
+        textContent += block.text;
+      } else if (block.type === "tool_use") {
+        toolCalls.push({
+          id: block.id,
+          name: block.name,
+          arguments: block.input as Record<string, unknown>,
+          ...(block.name === TEXT_EDITOR_TOOL_NAME
+            ? { executionKind: "provider_native" as const, provider: "anthropic" as const }
+            : { provider: "anthropic" as const }),
+          extra: {
+            providerRaw: {
+              provider: "anthropic",
+              outputItems,
+              stopReason: response.stop_reason,
+              finishReason,
+            },
+          },
+        });
+      }
+      // Ignore thinking/redacted_thinking blocks for result
+    }
+
+    const hasToolCalls = toolCalls.length > 0;
+    const usage = this.mapUsage(response.usage);
+
     return {
       type: hasToolCalls ? "tool_use" : "message",
       content: textContent || null,
@@ -454,6 +498,14 @@ export class AnthropicClient implements LLMClient {
       usage,
       responseId: response.id,
       finishReason,
+      extra: {
+        providerRaw: {
+          provider: "anthropic",
+          outputItems,
+          stopReason: response.stop_reason,
+          finishReason,
+        },
+      },
     };
   }
 
@@ -495,4 +547,69 @@ export class AnthropicClient implements LLMClient {
     if (error instanceof Error) return error;
     return new Error(String(error));
   }
+}
+
+function extractToolCallArguments(message: LLMMessage): Record<string, unknown> {
+  const call = message.extra?.tool?.call;
+  if (!call || typeof call !== "object" || Array.isArray(call)) {
+    return {};
+  }
+
+  const args = (call as { arguments?: unknown }).arguments;
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    return {};
+  }
+
+  return args as Record<string, unknown>;
+}
+
+function getAnthropicRawContentBlocks(message: LLMMessage): Anthropic.ContentBlockParam[] | undefined {
+  const raw = message.extra?.providerRaw;
+  if (raw?.provider !== "anthropic" || !Array.isArray(raw.outputItems)) {
+    return undefined;
+  }
+
+  const blocks = raw.outputItems.filter(isAnthropicContentBlockParam);
+  return blocks.length > 0 ? blocks : undefined;
+}
+
+function isAnthropicContentBlockParam(value: unknown): value is Anthropic.ContentBlockParam {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  const type = (value as { type?: unknown }).type;
+  return type === "thinking" ||
+    type === "redacted_thinking" ||
+    type === "text" ||
+    type === "tool_use";
+}
+
+function removeToolCallSummaryTextBlocks(blocks: Anthropic.ContentBlockParam[]): void {
+  for (let i = blocks.length - 1; i >= 0; i--) {
+    const block = blocks[i];
+    if (block.type !== "text") {
+      continue;
+    }
+
+    const stripped = stripToolCallSummaryLines(block.text);
+    if (stripped.trim().length === 0) {
+      blocks.splice(i, 1);
+    } else {
+      block.text = stripped;
+    }
+  }
+}
+
+function stripToolCallSummaryLines(text: string): string {
+  return text
+    .split("\n")
+    .filter((line) => !isToolCallSummaryLine(line))
+    .join("\n")
+    .trim();
+}
+
+function isToolCallSummaryLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.startsWith("[tool_call: ") && trimmed.endsWith("]");
 }

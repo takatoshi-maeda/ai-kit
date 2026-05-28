@@ -26,6 +26,19 @@ function buildTracingMetadata(
   };
 }
 
+function buildResultTracingMetadata(
+  provider: LLMProvider,
+  mode: "invoke" | "stream",
+  result: LLMResult,
+): Record<string, unknown> {
+  return buildTracingMetadata(provider, mode, {
+    responseId: result.responseId,
+    finishReason: result.finishReason,
+    toolCalls: result.toolCalls.length,
+    ...(result.extra?.providerRaw ? { providerRaw: result.extra.providerRaw } : {}),
+  });
+}
+
 export function createLLMClient(options: LLMClientOptions): LLMClient {
   const client = (() => {
   switch (options.provider) {
@@ -72,10 +85,7 @@ function createTracedLLMClient(client: LLMClient): LLMClient {
           observation.update({
             output: result.content,
             usage: result.usage,
-            metadata: buildTracingMetadata(client.provider, "invoke", {
-              responseId: result.responseId,
-              toolCalls: result.toolCalls.length,
-            }),
+            metadata: buildResultTracingMetadata(client.provider, "invoke", result),
           });
           return result;
         },
@@ -133,10 +143,7 @@ async function *tracedStream(
         observation.update({
           output: completedResult.content,
           usage: completedResult.usage,
-          metadata: buildTracingMetadata(client.provider, "stream", {
-            responseId: completedResult.responseId,
-            toolCalls: completedResult.toolCalls.length,
-          }),
+          metadata: buildResultTracingMetadata(client.provider, "stream", completedResult),
         });
       } else if (streamError) {
         observation.update({

@@ -4,7 +4,9 @@ import * as path from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
 import type { ContentPart, LLMMessage } from "../types/llm.js";
+import type { AgentSkillResolverContext, AgentSkillsOptions } from "../types/agent.js";
 import type { AgentReasoningEffort, AgentVerbosity } from "../types/runtime.js";
+import type { LLMProvider } from "../types/agent.js";
 
 export interface SkillAgentRuntime {
   model?: string;
@@ -23,6 +25,7 @@ export interface DiscoveredSkill {
 
 export interface ListSkillsOptions {
   builtInSkillRoots?: string[];
+  provider?: LLMProvider;
 }
 
 interface ParsedSkillFile {
@@ -43,9 +46,9 @@ export async function listSkills(
 ): Promise<DiscoveredSkill[]> {
   const workspaceSkillsRoot = path.join(path.resolve(workingDir), ".skills");
   const [bundledSkills, builtInSkillGroups, workspaceSkills] = await Promise.all([
-    listSkillsFromRoot(bundledSkillsRoot),
-    Promise.all((options.builtInSkillRoots ?? []).map((root) => listSkillsFromRoot(root))),
-    listSkillsFromRoot(workspaceSkillsRoot),
+    listSkillsFromRoot(bundledSkillsRoot, options.provider),
+    Promise.all((options.builtInSkillRoots ?? []).map((root) => listSkillsFromRoot(root, options.provider))),
+    listSkillsFromRoot(workspaceSkillsRoot, options.provider),
   ]);
 
   const merged = new Map<string, DiscoveredSkill>();
@@ -60,6 +63,20 @@ export async function listSkills(
   }
 
   return [...merged.values()].sort((left, right) => left.name.localeCompare(right.name));
+}
+
+export async function resolveBuiltInSkillRoots(
+  skills: AgentSkillsOptions | undefined,
+  context: AgentSkillResolverContext,
+): Promise<string[]> {
+  const roots = skills?.builtInSkillRoots;
+  if (!roots) {
+    return [];
+  }
+  if (typeof roots === "function") {
+    return roots(context);
+  }
+  return roots;
 }
 
 export function collectSkillMentionNames(
@@ -198,12 +215,23 @@ async function readSkillFile(filePath: string): Promise<ParsedSkillFile | null> 
   return parsed;
 }
 
-async function listSkillsFromRoot(rootDirectory: string): Promise<DiscoveredSkill[]> {
-  return collectSkillsFromDirectory(path.resolve(rootDirectory));
+async function readSkillFileForProvider(directory: string, provider?: LLMProvider): Promise<ParsedSkillFile | null> {
+  if (provider) {
+    const providerSpecific = await readSkillFile(path.join(directory, `SKILL.${provider}.md`));
+    if (providerSpecific) {
+      return providerSpecific;
+    }
+  }
+
+  return readSkillFile(path.join(directory, "SKILL.md"));
 }
 
-async function collectSkillsFromDirectory(directory: string): Promise<DiscoveredSkill[]> {
-  const parsed = await readSkillFile(path.join(directory, "SKILL.md"));
+async function listSkillsFromRoot(rootDirectory: string, provider?: LLMProvider): Promise<DiscoveredSkill[]> {
+  return collectSkillsFromDirectory(path.resolve(rootDirectory), provider);
+}
+
+async function collectSkillsFromDirectory(directory: string, provider?: LLMProvider): Promise<DiscoveredSkill[]> {
+  const parsed = await readSkillFileForProvider(directory, provider);
   if (parsed) {
     return [toDiscoveredSkill(directory, parsed)];
   }
@@ -224,7 +252,7 @@ async function collectSkillsFromDirectory(directory: string): Promise<Discovered
     if (!entry.isDirectory()) {
       continue;
     }
-    skills.push(...await collectSkillsFromDirectory(path.join(directory, entry.name)));
+    skills.push(...await collectSkillsFromDirectory(path.join(directory, entry.name), provider));
   }
   return skills;
 }

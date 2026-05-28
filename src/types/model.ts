@@ -11,6 +11,7 @@ export interface ModelInfo {
   modelId: string;
   displayName: string;
   contextWindowSize: number;
+  maxOutputTokens?: number;
   inputCostPer1MTokens: number;
   outputCostPer1MTokens: number;
   cacheReadCostPer1MTokens?: number;

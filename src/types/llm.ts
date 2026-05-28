@@ -43,7 +43,7 @@ export interface LLMMessage {
         id: string;
         name: string;
         executionKind: ToolExecutionKind;
-        provider?: "openai";
+        provider?: "openai" | "anthropic";
         arguments: Record<string, unknown>;
         extra?: Record<string, unknown>;
       };
@@ -96,4 +96,8 @@ export interface LLMResult {
   usage: LLMUsage;
   responseId: string | null;
   finishReason: "stop" | "tool_use" | "length" | "content_filter";
+  extra?: {
+    providerRaw?: ProviderRawTransport;
+    [key: string]: unknown;
+  };
 }

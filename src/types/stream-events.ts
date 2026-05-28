@@ -38,6 +38,8 @@ export interface ToolCallDoneEvent {
   toolCallId: string;
   name: string;
   arguments: Record<string, unknown>;
+  executionKind?: "user_function" | "provider_native";
+  provider?: "openai" | "anthropic";
 }
 
 export interface ToolResultEvent {

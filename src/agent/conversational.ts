@@ -459,6 +459,7 @@ export class ConversationalAgent {
         await context.history.addMessage({
           role: "assistant",
           content: turnLLMResult.content,
+          extra: turnLLMResult.extra,
           metadata: serializedUsageCostSession
             ? {
                 [USAGE_COST_SESSION_METADATA_KEY]: serializedUsageCostSession,
@@ -525,6 +526,9 @@ export class ConversationalAgent {
           metadata: {
             toolCallId: toolCall.id,
             toolName: toolCall.name,
+            provider: toolCall.provider,
+            executionKind: toolCall.executionKind,
+            ...(toolCall.extra?.providerRaw ? { providerRaw: toolCall.extra.providerRaw } : {}),
           },
         },
         async (observation) => {
@@ -533,7 +537,12 @@ export class ConversationalAgent {
             observation.update({
               output: toolResult.content,
               metadata: {
+                toolCallId: toolCall.id,
+                toolName: toolCall.name,
                 isError: !!toolResult.isError,
+                provider: toolCall.provider,
+                executionKind: toolCall.executionKind,
+                ...(toolCall.extra?.providerRaw ? { providerRaw: toolCall.extra.providerRaw } : {}),
               },
             });
             return toolResult;
@@ -542,7 +551,12 @@ export class ConversationalAgent {
             observation.update({
               output: message,
               metadata: {
+                toolCallId: toolCall.id,
+                toolName: toolCall.name,
                 isError: true,
+                provider: toolCall.provider,
+                executionKind: toolCall.executionKind,
+                ...(toolCall.extra?.providerRaw ? { providerRaw: toolCall.extra.providerRaw } : {}),
               },
             });
             return {

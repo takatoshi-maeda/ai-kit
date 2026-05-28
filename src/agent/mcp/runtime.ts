@@ -7,7 +7,7 @@ import type {
   ResolvedAgentRuntime,
 } from "../../types/runtime.js";
 
-const SUPPORTED_RUNTIME_PROVIDERS = new Set(["openai"]);
+const SUPPORTED_RUNTIME_PROVIDERS = new Set(["openai", "anthropic"]);
 
 export class AgentRuntimeValidationError extends AiKitError {
   constructor(message: string) {

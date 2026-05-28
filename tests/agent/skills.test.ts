@@ -6,6 +6,7 @@ import * as fs from "node:fs/promises";
 import {
   buildActiveSkillsInstructionMessages,
   listSkills,
+  resolveBuiltInSkillRoots,
 } from "../../src/agent/skills.js";
 
 async function writeSkill(
@@ -35,9 +36,10 @@ async function writeSkillFile(
   name: string,
   description: string,
   body: string,
+  fileName = "SKILL.md",
 ): Promise<void> {
   await fs.mkdir(skillDir, { recursive: true });
-  await fs.writeFile(path.join(skillDir, "SKILL.md"), [
+  await fs.writeFile(path.join(skillDir, fileName), [
     "---",
     `name: ${name}`,
     `description: ${description}`,
@@ -134,6 +136,51 @@ describe("skill discovery", () => {
       directory: path.join(tmpDir, ".skills", "focus"),
     });
   });
+
+  it("prefers provider-specific skill files and falls back to SKILL.md", async () => {
+    const tmpDir = await mkdtemp(path.join(os.tmpdir(), "ai-kit-skills-provider-"));
+    const builtInRoot = await mkdtemp(path.join(os.tmpdir(), "ai-kit-built-in-provider-skills-"));
+    await writeSkillFile(
+      path.join(builtInRoot, "edit-doc"),
+      "edit-doc",
+      "Default editor",
+      "Use the default editor.",
+    );
+    await writeSkillFile(
+      path.join(builtInRoot, "edit-doc"),
+      "edit-doc",
+      "Anthropic editor",
+      "Use str_replace_based_edit_tool.",
+      "SKILL.anthropic.md",
+    );
+    await writeBuiltInSkill(
+      builtInRoot,
+      "research-plan",
+      "Built-in research plan",
+      "Plan the investigation.",
+    );
+
+    const anthropicSkills = await listSkills(tmpDir, {
+      builtInSkillRoots: [builtInRoot],
+      provider: "anthropic",
+    });
+    const openAiSkills = await listSkills(tmpDir, {
+      builtInSkillRoots: [builtInRoot],
+      provider: "openai",
+    });
+
+    expect(anthropicSkills.find((skill) => skill.name === "edit-doc")).toMatchObject({
+      description: "Anthropic editor",
+      body: "Use str_replace_based_edit_tool.",
+    });
+    expect(openAiSkills.find((skill) => skill.name === "edit-doc")).toMatchObject({
+      description: "Default editor",
+      body: "Use the default editor.",
+    });
+    expect(anthropicSkills.find((skill) => skill.name === "research-plan")).toMatchObject({
+      description: "Built-in research plan",
+    });
+  });
 });
 
 describe("active skill instructions", () => {
@@ -164,5 +211,26 @@ describe("active skill instructions", () => {
       role: "system",
       content: expect.stringContaining('<skill_content name="review">'),
     });
+  });
+});
+
+describe("built-in skill roots", () => {
+  it("resolves dynamic roots from runtime policy context", async () => {
+    const roots = await resolveBuiltInSkillRoots({
+      builtInSkillRoots: ({ runtimePolicy }) => [
+        "common",
+        runtimePolicy?.provider === "anthropic" ? "anthropic" : "openai",
+      ],
+      resolveWorkingDir: () => "/tmp",
+    }, {
+      agentContext: {} as never,
+      runtimePolicy: {
+        provider: "anthropic",
+        defaults: { model: "claude-sonnet-4-6" },
+      },
+      runtime: { model: "claude-sonnet-4-6" },
+    });
+
+    expect(roots).toEqual(["common", "anthropic"]);
   });
 });

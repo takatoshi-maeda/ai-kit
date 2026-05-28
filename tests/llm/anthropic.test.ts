@@ -104,6 +104,11 @@ describe("AnthropicClient", () => {
       expect(result.content).toBe("Hello back!");
       expect(result.responseId).toBe("msg-1");
       expect(result.finishReason).toBe("stop");
+      expect(result.extra?.providerRaw).toMatchObject({
+        provider: "anthropic",
+        stopReason: "end_turn",
+        finishReason: "stop",
+      });
       expect(result.usage.inputTokens).toBe(10);
       expect(result.usage.cachedInputTokens).toBe(2);
     });
@@ -188,6 +193,91 @@ describe("AnthropicClient", () => {
       expect(callArgs.tools[0].input_schema.type).toBe("object");
     });
 
+    it("converts Anthropic text editor native tools without an input schema", async () => {
+      mockCreate.mockResolvedValue({
+        id: "msg-4b",
+        content: [{ type: "text", text: "ok" }],
+        stop_reason: "end_turn",
+        type: "message",
+        usage: { input_tokens: 5, output_tokens: 5 },
+      });
+
+      const client = makeClient();
+      await client.invoke({
+        messages: [{ role: "user", content: "test" }],
+        tools: [
+          {
+            kind: "provider_native",
+            provider: "anthropic",
+            type: "text_editor_20250728",
+            name: "str_replace_based_edit_tool",
+            maxCharacters: 10000,
+          },
+        ],
+      });
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.tools).toEqual([
+        {
+          type: "text_editor_20250728",
+          name: "str_replace_based_edit_tool",
+          max_characters: 10000,
+        },
+      ]);
+    });
+
+    it("marks text editor tool_use blocks as provider-native Anthropic calls", async () => {
+      mockCreate.mockResolvedValue({
+        id: "msg-4c",
+        content: [
+          {
+            type: "thinking",
+            thinking: "Need to inspect the file.",
+            signature: "sig-thinking",
+          },
+          {
+            type: "tool_use",
+            id: "tu-editor",
+            name: "str_replace_based_edit_tool",
+            input: { command: "view", path: "README.md" },
+          },
+        ],
+        stop_reason: "tool_use",
+        type: "message",
+        usage: { input_tokens: 10, output_tokens: 5 },
+      });
+
+      const client = makeClient();
+      const result = await client.invoke(makeBasicInput());
+
+      expect(result.toolCalls[0]).toMatchObject({
+        id: "tu-editor",
+        name: "str_replace_based_edit_tool",
+        arguments: { command: "view", path: "README.md" },
+        executionKind: "provider_native",
+        provider: "anthropic",
+      });
+      expect(result.extra?.providerRaw).toMatchObject({
+        provider: "anthropic",
+        stopReason: "tool_use",
+        finishReason: "tool_use",
+        outputItems: [
+          {
+            type: "thinking",
+            thinking: "Need to inspect the file.",
+            signature: "sig-thinking",
+          },
+          {
+            type: "tool_use",
+            id: "tu-editor",
+            name: "str_replace_based_edit_tool",
+            input: { command: "view", path: "README.md" },
+          },
+        ],
+      });
+      expect(result.toolCalls[0].extra?.providerRaw).toEqual(result.extra?.providerRaw);
+    });
+
     it("converts tool messages to tool_result blocks", async () => {
       mockCreate.mockResolvedValue({
         id: "msg-5",
@@ -210,6 +300,170 @@ describe("AnthropicClient", () => {
       expect(callArgs.messages[1].role).toBe("user");
       expect(callArgs.messages[1].content[0].type).toBe("tool_result");
       expect(callArgs.messages[1].content[0].tool_use_id).toBe("tu-1");
+    });
+
+    it("passes Anthropic thinking and tool_use blocks back from provider raw history", async () => {
+      mockCreate.mockResolvedValue({
+        id: "msg-5a",
+        content: [{ type: "text", text: "ok" }],
+        stop_reason: "end_turn",
+        type: "message",
+        usage: { input_tokens: 5, output_tokens: 5 },
+      });
+
+      const client = makeClient();
+      await client.invoke({
+        messages: [
+          {
+            role: "assistant",
+            content: "synthetic summary",
+            extra: {
+              providerRaw: {
+                provider: "anthropic",
+                outputItems: [
+                  {
+                    type: "thinking",
+                    thinking: "Need to search.",
+                    signature: "sig-thinking",
+                  },
+                  {
+                    type: "tool_use",
+                    id: "tu-1",
+                    name: "grounding_search",
+                    input: { query: "AI discovery" },
+                  },
+                ],
+              },
+            },
+          },
+          { role: "tool", content: "result data", name: "grounding_search", toolCallId: "tu-1" },
+        ],
+      });
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.messages[0].content).toEqual([
+        {
+          type: "thinking",
+          thinking: "Need to search.",
+          signature: "sig-thinking",
+        },
+        {
+          type: "tool_use",
+          id: "tu-1",
+          name: "grounding_search",
+          input: { query: "AI discovery" },
+        },
+      ]);
+      expect(callArgs.messages[1].content[0]).toMatchObject({
+        type: "tool_result",
+        tool_use_id: "tu-1",
+      });
+    });
+
+    it("preserves tool_use input when converting Anthropic tool result history", async () => {
+      mockCreate.mockResolvedValue({
+        id: "msg-5b",
+        content: [{ type: "text", text: "ok" }],
+        stop_reason: "end_turn",
+        type: "message",
+        usage: { input_tokens: 5, output_tokens: 5 },
+      });
+
+      const client = makeClient();
+      await client.invoke({
+        messages: [
+          {
+            role: "tool",
+            content: "result data",
+            name: "workspace_read",
+            toolCallId: "tu-1",
+            extra: {
+              tool: {
+                call: {
+                  id: "tu-1",
+                  name: "workspace_read",
+                  provider: "anthropic",
+                  executionKind: "user_function",
+                  arguments: {
+                    workspace: "writing",
+                    path: "research/.plan.md",
+                    startLine: 430,
+                    endLine: 534,
+                  },
+                },
+              },
+            },
+          },
+        ],
+      });
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.messages[0].content[0]).toMatchObject({
+        type: "tool_use",
+        id: "tu-1",
+        name: "workspace_read",
+        input: {
+          workspace: "writing",
+          path: "research/.plan.md",
+          startLine: 430,
+          endLine: 534,
+        },
+      });
+    });
+
+    it("strips synthetic tool_call summary text from Anthropic tool result history", async () => {
+      mockCreate.mockResolvedValue({
+        id: "msg-5c",
+        content: [{ type: "text", text: "ok" }],
+        stop_reason: "end_turn",
+        type: "message",
+        usage: { input_tokens: 5, output_tokens: 5 },
+      });
+
+      const client = makeClient();
+      await client.invoke({
+        messages: [
+          {
+            role: "assistant",
+            content:
+              "追加調査します。\n[tool_call: grounding_search({\"query\":\"AI R&D cost reduction\",\"maxOutputTokens\":2000})]",
+          },
+          {
+            role: "tool",
+            content: "result data",
+            name: "grounding_search",
+            toolCallId: "tu-1",
+            extra: {
+              tool: {
+                call: {
+                  id: "tu-1",
+                  name: "grounding_search",
+                  provider: "anthropic",
+                  executionKind: "user_function",
+                  arguments: {
+                    query: "AI R&D cost reduction",
+                    maxOutputTokens: 2000,
+                  },
+                },
+              },
+            },
+          },
+        ],
+      });
+
+      const callArgs = mockCreate.mock.calls[0][0];
+      expect(callArgs.messages[0].content).toEqual([
+        { type: "text", text: "追加調査します。" },
+        {
+          type: "tool_use",
+          id: "tu-1",
+          name: "grounding_search",
+          input: {
+            query: "AI R&D cost reduction",
+            maxOutputTokens: 2000,
+          },
+        },
+      ]);
     });
 
     it("maps toolChoice correctly", async () => {
